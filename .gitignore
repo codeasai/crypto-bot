@@ -27,8 +27,31 @@ logs/
 .coverage
 htmlcov/
 
-# Distribution
+# Distribution / Dependencies (Python)
 dist/
 build/
-*.egg-info/ 
-node_modules
+*.egg-info/
+
+# Dependencies (Node)
+node_modules # General node_modules
+frontend/node_modules/ # Specific frontend node_modules
+
+# Frontend specific build/test outputs
+frontend/.pnp
+frontend/.pnp.js
+frontend/coverage/
+frontend/build/
+
+# Frontend specific env files
+frontend/.env.local
+frontend/.env.development.local
+frontend/.env.test.local
+frontend/.env.production.local
+
+# OS generated files
+.DS_Store
+
+# Node package manager logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
