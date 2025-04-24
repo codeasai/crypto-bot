@@ -1,0 +1,13 @@
+{
+    "api_key": "4pyoUVBq2v52hdDqD6H1UI9QJwYd666qjtkPzQFW8Xgbmc0c5Q16Q00Mr4kaZdiB",
+    "api_secret": "rQeNaJhLPmEVKUurFTSvgLcuUNmOFwG1N3rN3XoF9ZcTmbq7A6O5hdjvMSmFcfv",
+    "is_testnet": true,
+    "symbols": ["BTC/USDC"],
+    "timeframe": "5m",
+    "profit_target_percentage": 0.05,
+    "buy_dip_percentage": 0.1,
+    "max_position_percentage": 0.2,
+    "max_trade_percentage": 0.05,
+    "check_interval": 60,
+    "maturity_level": 1
+}

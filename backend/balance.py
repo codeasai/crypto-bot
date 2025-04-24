@@ -3,7 +3,6 @@ from config import TESTNET_API_KEY, TESTNET_API_SECRET
 import time
 from datetime import datetime
 from order import Order
-from tabulate import tabulate
 
 class Balance:
     def __init__(self):
@@ -61,8 +60,20 @@ class Balance:
                 return
                 
             # Create balance table
-            balance_table = []
             total_value = 0
+            
+            print("\n" + "="*100)
+            print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            print("💰 Portfolio Status:")
+            print("="*100)
+            
+            print(f"\n📊 Total Assets: {len(balances)}")
+            print("📊 Balance:")
+            print("+" + "-"*98 + "+")
+            print("| {:<8} | {:<12} | {:<12} | {:<12} | {:<12} | {:<12} |".format(
+                "Asset", "Free", "Locked", "Total", "Price (USD)", "Value (USD)"
+            ))
+            print("+" + "-"*98 + "+")
             
             for balance in balances:
                 asset = balance['asset']
@@ -73,26 +84,16 @@ class Balance:
                 value = balance['total'] * price
                 total_value += value
                 
-                balance_table.append([
+                print("| {:<8} | {:<12,.8f} | {:<12,.8f} | {:<12,.8f} | ${:<11,.2f} | ${:<11,.2f} |".format(
                     asset,
-                    f"{balance['free']:,.8f}",
-                    f"{balance['locked']:,.8f}",
-                    f"{balance['total']:,.8f}",
-                    f"${price:,.2f}",
-                    f"${value:,.2f}"
-                ])
+                    balance['free'],
+                    balance['locked'],
+                    balance['total'],
+                    price,
+                    value
+                ))
             
-            headers = ["Asset", "Free", "Locked", "Total", "Price (USD)", "Value (USD)"]
-            
-            print("\n" + "="*100)
-            print(f"⏰ Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-            print("💰 Portfolio Status:")
-            print("="*100)
-            
-            print(f"\n📊 Total Assets: {len(balances)}")
-            print("📊 Balance:")
-            print(tabulate(balance_table, headers=headers, tablefmt="grid"))
-            
+            print("+" + "-"*98 + "+")
             print(f"\n💰 Total Portfolio Value: ${total_value:,.2f}")
                 
             # Show recent orders
@@ -102,19 +103,23 @@ class Balance:
                 print("📊 Recent Orders:")
                 print("="*100)
                 
-                order_table = []
+                print("+" + "-"*98 + "+")
+                print("| {:<8} | {:<12} | {:<8} | {:<12} | {:<10} | {:<20} |".format(
+                    "ID", "Pair", "Type", "Amount", "Status", "Time"
+                ))
+                print("+" + "-"*98 + "+")
+                
                 for order in recent_orders:
-                    order_table.append([
+                    print("| {:<8} | {:<12} | {:<8} | {:<12,.8f} | {:<10} | {:<20} |".format(
                         order['order_id'],
                         order['symbol'],
                         order['side'],
-                        f"{order['quantity']:,.8f}",
+                        order['quantity'],
                         order['status'],
                         order['time']
-                    ])
+                    ))
                 
-                order_headers = ["ID", "Pair", "Type", "Amount", "Status", "Time"]
-                print(tabulate(order_table, headers=order_headers, tablefmt="grid"))
+                print("+" + "-"*98 + "+")
                 
         except Exception as e:
             print(f"❌ Error: {str(e)}")

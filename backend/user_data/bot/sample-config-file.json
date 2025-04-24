@@ -1,0 +1,13 @@
+{
+    "api_key": "YOUR_BINANCE_API_KEY",
+    "api_secret": "YOUR_BINANCE_API_SECRET",
+    "is_testnet": true,
+    "symbols": ["BTC/USDT", "ETH/USDT", "BNB/USDT"],
+    "timeframe": "1h",
+    "profit_target_percentage": 0.05,
+    "buy_dip_percentage": 0.10,
+    "max_position_percentage": 0.20,
+    "max_trade_percentage": 0.05,
+    "check_interval": 300,
+    "maturity_level": 1
+}

@@ -1,0 +1,10 @@
+flask
+flask-cors
+google-auth
+requests
+PyJWT
+ccxt
+pandas
+numpy
+python-dotenv
+
