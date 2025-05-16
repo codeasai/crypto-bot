@@ -13,21 +13,24 @@
 
 ## การติดตั้ง
 
-1. โคลนโปรเจกต์:
+โคลนโปรเจกต์:
 ```bash
 git clone https://github.com/yourusername/crypto-trading-bot.git
 cd crypto-trading-bot
+```
 
-ติดตั้งแพคเกจที่จำเป็น:
+### ติดตั้งแพคเกจที่จำเป็น:
 
-bashpip install -r requirements.txt
+```bash
+pip install -r requirements.txt
+```
+### ตั้งค่าโครงสร้างโปรเจกต์:
 
-ตั้งค่าโครงสร้างโปรเจกต์:
-
-bash
+```bash
 python main.py setup
-
-# สร้างไฟล์ config.py
+```
+### สร้างไฟล์ config.py
+```bash
 cat > config/config.py << EOL
 """
 ไฟล์การตั้งค่าหลักสำหรับระบบ RL-Agent Crypto Trading
@@ -112,8 +115,10 @@ RISK_CONFIG = {
     'min_trade_interval': 3600,     # ระยะเวลาขั้นต่ำระหว่างการเทรด (วินาที)
 }
 EOL
+```
 
-# สร้างไฟล์ credentials.py
+### สร้างไฟล์ credentials.py
+```bash
 cat > config/credentials.py << EOL
 """
 ไฟล์เก็บ API key (ไม่ควร push ขึ้น git)
@@ -126,10 +131,11 @@ cat > config/credentials.py << EOL
 API_KEY = 'YOUR_API_KEY'
 API_SECRET = 'YOUR_API_SECRET'
 EOL
+```
+### สร้างไฟล์ .gitignore
 
-# สร้างไฟล์ .gitignore
-
-# test
+### ไฟล์สำคัญอื่น ๆ
+```
 data/data_collector.py
 data/feature_engineering.py
 utils/metrics.py
@@ -141,26 +147,37 @@ backtest.py
 live_trading/live_trading.py
 main.py
 README.md
+```
 
-
-การใช้งาน
-1. เตรียมข้อมูล
+## การใช้งาน
+### 1. เตรียมข้อมูล
 ดาวน์โหลดข้อมูลประวัติราคา (historical price data) จาก Exchange หรือแหล่งข้อมูลอื่นๆ และเก็บไว้ในโฟลเดอร์ data/ โดยใช้รูปแบบไฟล์ตามนี้:
+```
 data/{SYMBOL}_{TIMEFRAME}_{STARTDATE}_{ENDDATE}.csv
 เช่น:
 data/BTCUSDT_1h_20200101_20221231.csv
-2. ฝึกสอนโมเดล
-bashpython main.py train --symbol BTCUSDT --timeframe 1h --start_date 2020-01-01 --end_date 2022-12-31 --episodes 1000
+```
+### 2. ฝึกสอนโมเดล
+```bash
+python main.py train --symbol BTCUSDT --timeframe 1h --start_date 2020-01-01 --end_date 2022-12-31 --episodes 1000
+```
 โมเดลที่ฝึกสอนแล้วจะถูกบันทึกไว้ในโฟลเดอร์ outputs/ พร้อมกับกราฟแสดงผลการฝึกสอน
-3. ทดสอบย้อนหลัง
-bashpython main.py backtest --model_path outputs/BTCUSDT_1h_20230101_123456/best_model.h5 --symbol BTCUSDT --timeframe 1h --start_date 2023-01-01 --end_date 2023-12-31
+
+### 3. ทดสอบย้อนหลัง
+```bash
+python main.py backtest --model_path outputs/BTCUSDT_1h_20230101_123456/best_model.h5 --symbol BTCUSDT --timeframe 1h --start_date 2023-01-01 --end_date 2023-12-31
+```
 ผลการทดสอบย้อนหลังจะถูกบันทึกไว้ในโฟลเดอร์ backtest_results/ พร้อมกับกราฟแสดงผลการเทรด
-4. เทรดแบบเรียลไทม์
-bashpython main.py live --model_path outputs/BTCUSDT_1h_20230101_123456/best_model.h5 --symbol BTCUSDT --timeframe 15m --exchange binance --api_key YOUR_API_KEY --api_secret YOUR_API_SECRET --duration 24
+### 4. เทรดแบบเรียลไทม์
+```bash 
+python main.py live --model_path outputs/BTCUSDT_1h_20230101_123456/best_model.h5 --symbol BTCUSDT --timeframe 15m --exchange binance --api_key YOUR_API_KEY --api_secret YOUR_API_SECRET --duration 24
+```
 ประวัติการเทรดและข้อมูลสถานะต่างๆ จะถูกบันทึกไว้ในโฟลเดอร์ live_trading_logs/
 
+\ncode block\n
 
-# โครงสร้างโปรเจค
+## โครงสร้างโปรเจค
+```
 crypto-trading-bot/
 ├── backtest.py              # สคริปต์สำหรับการทดสอบย้อนหลัง
 ├── backtest_results/        # ผลลัพธ์การทดสอบย้อนหลัง
@@ -178,21 +195,28 @@ crypto-trading-bot/
 ├── train.py                # สคริปต์สำหรับการฝึกสอน
 └── utils/                  # ยูทิลิตี้ต่างๆ
     └── data_processor.py  # ตัวประมวลผลข้อมูล
+```
 
-
-หมายเหตุสำคัญเกี่ยวกับความเสี่ยง
+## หมายเหตุสำคัญเกี่ยวกับความเสี่ยง
 การเทรดสินทรัพย์คริปโตมีความเสี่ยงสูง คุณอาจสูญเสียเงินทั้งหมดที่ลงทุน บอทนี้เป็นเพียงเครื่องมือช่วยในการเทรดเท่านั้น ไม่ใช่คำแนะนำทางการเงิน กรุณาศึกษาและทดสอบอย่างละเอียดก่อนใช้งานจริง
 
 เราได้สร้างองค์ประกอบหลักทั้งหมดของระบบ Crypto Trading Bot ที่ใช้ Reinforcement Learning ตามที่ระบุในเอกสารที่คุณแชร์มา โครงสร้างระบบประกอบด้วย:
-
-1. **Environment (สภาพแวดล้อม)** - ไฟล์ `environment/trading_env.py`
-2. **Data Processor (ตัวประมวลผลข้อมูล)** - ไฟล์ `utils/data_processor.py` 
-3. **Agent (ตัวแทน AI)** - ไฟล์ `models/dqn_agent.py`
-4. **Training (การฝึกสอน)** - ไฟล์ `train.py`
-5. **Backtesting (การทดสอบย้อนหลัง)** - ไฟล์ `backtest.py`
-6. **Live Trading (การเทรดแบบเรียลไทม์)** - ไฟล์ `live_trading.py`
-7. **Main Program (โปรแกรมหลัก)** - ไฟล์ `main.py`
-
+```
+1. **Environment (สภาพแวดล้อม)** 
+- ไฟล์ `environment/trading_env.py`
+2. **Data Processor (ตัวประมวลผลข้อมูล)** 
+- ไฟล์ `utils/data_processor.py` 
+3. **Agent (ตัวแทน AI)** 
+- ไฟล์ `models/dqn_agent.py`
+4. **Training (การฝึกสอน)** 
+- ไฟล์ `train.py`
+5. **Backtesting (การทดสอบย้อนหลัง)** 
+- ไฟล์ `backtest.py`
+6. **Live Trading (การเทรดแบบเรียลไทม์)** 
+- ไฟล์ `live_trading.py`
+7. **Main Program (โปรแกรมหลัก)** 
+- ไฟล์ `main.py`
+```
 ระบบนี้รองรับฟังก์ชันทั้งหมดตามที่ระบุในเอกสาร รวมถึงการใช้ตัวชี้วัดทางเทคนิคต่างๆ การจัดการความเสี่ยง และการประเมินประสิทธิภาพของโมเดล
 
 คุณสามารถใช้โค้ดนี้เป็นพื้นฐานในการพัฒนาบอทเทรดของคุณเอง และปรับแต่งพารามิเตอร์ต่างๆ เพื่อให้เหมาะกับกลยุทธ์การเทรดของคุณ
