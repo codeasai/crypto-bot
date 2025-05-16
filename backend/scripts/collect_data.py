@@ -5,67 +5,20 @@
 import os
 import sys
 import argparse
-from datetime import datetime, timedelta
 
 # เพิ่ม path สำหรับ import โมดูลจากโฟลเดอร์อื่น
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from data.data_collector import BinanceDataCollector
-from data.feature_engineering import FeatureEngineering
 from utils.logger import setup_logger
 
 # ตั้งค่า logger
 logger = setup_logger('collect_data')
 
-
-def main(args):
+def main():
     """
     ฟังก์ชันหลักสำหรับเก็บรวบรวมข้อมูล
-    
-    Args:
-        args: พารามิเตอร์จากคำสั่ง
     """
-    # คำนวณวันที่เริ่มต้นจากจำนวนวัน
-    start_date = None
-    if args.days:
-        start_date = (datetime.now() - timedelta(days=args.days)).strftime('%Y-%m-%d')
-    elif args.start_date:
-        start_date = args.start_date
-    
-    # สร้าง DataCollector
-    collector = BinanceDataCollector(
-        symbol=args.symbol,
-        interval=args.interval,
-        start_date=start_date,
-        end_date=args.end_date,
-        testnet=args.testnet
-    )
-    
-    # ถ้าระบุให้อัพเดทข้อมูล
-    if args.update:
-        logger.info("กำลังอัพเดทข้อมูลให้เป็นปัจจุบัน")
-        df = collector.update_historical_data()
-    else:
-        # เก็บข้อมูลใหม่
-        logger.info("กำลังเก็บข้อมูลใหม่")
-        df = collector.get_historical_klines()
-    
-    logger.info(f"เก็บข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(df)} แถว")
-    
-    # ถ้าระบุให้ประมวลผลข้อมูล
-    if args.process:
-        logger.info("กำลังประมวลผลข้อมูล")
-        # สร้าง features
-        fe = FeatureEngineering(df=df)
-        processed_df = fe.process_data_pipeline(
-            normalize_method=args.normalize,
-            missing_method=args.missing_method
-        )
-        
-        logger.info(f"ประมวลผลข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(processed_df)} แถว และ {len(processed_df.columns)} คอลัมน์")
-
-
-if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='เก็บข้อมูลราคาและปริมาณการซื้อขายจาก Binance')
     
     parser.add_argument('--symbol', type=str, default='BTCUSDT',
@@ -91,4 +44,19 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    main(args)
+    # เรียกใช้ฟังก์ชันหลักจาก BinanceDataCollector
+    BinanceDataCollector.collect_and_process_data(
+        symbol=args.symbol,
+        interval=args.interval,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        days=args.days,
+        testnet=args.testnet,
+        update=args.update,
+        process=args.process,
+        normalize=args.normalize,
+        missing_method=args.missing_method
+    )
+
+if __name__ == "__main__":
+    main()

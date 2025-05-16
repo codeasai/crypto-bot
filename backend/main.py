@@ -68,7 +68,7 @@ def main():
             print("กรุณาระบุ --model_path สำหรับการทดสอบย้อนหลัง")
             sys.exit(1)
             
-        from backtest import backtest_model
+        from backend.backtest import backtest_model
         
         backtest_model(
             model_path=args.model_path,
@@ -103,3 +103,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+    

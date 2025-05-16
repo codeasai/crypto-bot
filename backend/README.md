@@ -174,8 +174,6 @@ python main.py live --model_path outputs/BTCUSDT_1h_20230101_123456/best_model.h
 ```
 ประวัติการเทรดและข้อมูลสถานะต่างๆ จะถูกบันทึกไว้ในโฟลเดอร์ live_trading_logs/
 
-\ncode block\n
-
 ## โครงสร้างโปรเจค
 ```
 crypto-trading-bot/

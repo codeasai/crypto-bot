@@ -10,9 +10,14 @@ import numpy as np
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
 import logging
-
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from typing import Optional, Dict, Any
+
+# เพิ่ม path ของ root directory
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+if parent_dir not in sys.path:
+    sys.path.insert(0, parent_dir)
 
 from config.config import DATA_CONFIG, TRADING_CONFIG, BINANCE_CONFIG
 from config.credentials import API_KEY, API_SECRET
@@ -21,13 +26,14 @@ from utils.logger import setup_logger
 # ตั้งค่า logger
 logger = setup_logger('data_collector')
 
-
 class BinanceDataCollector:
     """
     คลาสสำหรับการเก็บข้อมูลราคาและปริมาณการซื้อขายจาก Binance Exchange
     """
     
-    def __init__(self, symbol=None, interval=None, start_date=None, end_date=None, testnet=True):
+    def __init__(self, symbol: str = None, interval: str = None, 
+                 start_date: Optional[str] = None, end_date: Optional[str] = None, 
+                 testnet: bool = True):
         """
         เริ่มต้นการเชื่อมต่อกับ Binance API
         
@@ -44,7 +50,12 @@ class BinanceDataCollector:
         self.testnet = testnet
         
         # สร้าง Binance Client
-        self.client = Client(API_KEY, API_SECRET, testnet=testnet)
+        try:
+            self.client = Client(API_KEY, API_SECRET, testnet=testnet)
+            logger.info(f"เชื่อมต่อกับ Binance {'Testnet' if testnet else 'Mainnet'} สำเร็จ")
+        except Exception as e:
+            logger.error(f"ไม่สามารถเชื่อมต่อกับ Binance ได้: {e}")
+            raise
         
         # กำหนดวันที่เริ่มต้นและสิ้นสุด
         if start_date:
@@ -57,13 +68,13 @@ class BinanceDataCollector:
         self.end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d') if end_date else datetime.datetime.now()
         
         # สร้างโฟลเดอร์สำหรับเก็บข้อมูล
-        self.data_dir = DATA_CONFIG['data_dir']
+        self.data_dir = os.path.join(DATA_CONFIG['data_dir'], 'datasets')
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
             
         logger.info(f"เริ่มต้น BinanceDataCollector สำหรับ {self.symbol} ช่วงเวลา {self.interval}")
     
-    def get_historical_klines(self, save_to_csv=True):
+    def get_historical_klines(self, save_to_csv: bool = True) -> pd.DataFrame:
         """
         ดึงข้อมูลแท่งเทียนย้อนหลัง
         
@@ -83,20 +94,7 @@ class BinanceDataCollector:
         all_klines = []
         
         # คำนวณจำนวนแท่งเทียนที่ต้องการ
-        if self.interval == '1m':
-            limit = 1000  # Binance จำกัดการเรียกข้อมูลสูงสุด 1000 แท่งต่อครั้ง
-        elif self.interval == '5m':
-            limit = 1000
-        elif self.interval == '15m':
-            limit = 1000
-        elif self.interval == '1h':
-            limit = 1000
-        elif self.interval == '4h':
-            limit = 1000
-        elif self.interval == '1d':
-            limit = 1000
-        else:
-            limit = 1000
+        limit = 1000  # Binance จำกัดการเรียกข้อมูลสูงสุด 1000 แท่งต่อครั้ง
         
         # ดึงข้อมูลแบบแบ่งตามช่วงเวลา
         current_ts = start_ts
@@ -114,6 +112,7 @@ class BinanceDataCollector:
                 
                 # ถ้าไม่มีข้อมูล ให้หยุด
                 if not klines:
+                    logger.warning(f"ไม่พบข้อมูลในช่วงเวลา {datetime.datetime.fromtimestamp(current_ts/1000)}")
                     break
                 
                 # เพิ่มข้อมูลเข้าไปในรายการ
@@ -134,6 +133,10 @@ class BinanceDataCollector:
             except Exception as e:
                 logger.error(f"เกิดข้อผิดพลาด: {e}")
                 break
+        
+        if not all_klines:
+            logger.error("ไม่สามารถดึงข้อมูลได้")
+            return pd.DataFrame()
         
         # แปลงข้อมูลเป็น DataFrame
         columns = [
@@ -162,7 +165,7 @@ class BinanceDataCollector:
         df = df.drop(['close_time', 'ignore'], axis=1)
         
         # บันทึกเป็นไฟล์ CSV
-        if save_to_csv:
+        if save_to_csv and not df.empty:
             file_name = f"{self.symbol}_{self.interval}_{self.start_date.strftime('%Y%m%d')}_{self.end_date.strftime('%Y%m%d')}.csv"
             file_path = os.path.join(self.data_dir, file_name)
             df.to_csv(file_path, index=False)
@@ -170,7 +173,7 @@ class BinanceDataCollector:
         
         return df
     
-    def update_historical_data(self):
+    def update_historical_data(self) -> pd.DataFrame:
         """
         อัพเดทข้อมูลประวัติให้เป็นปัจจุบัน
         
@@ -231,11 +234,114 @@ class BinanceDataCollector:
         
         return df
 
+    @staticmethod
+    def collect_and_process_data(
+        symbol: str,
+        interval: str,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        days: Optional[int] = None,
+        testnet: bool = True,
+        update: bool = False,
+        process: bool = False,
+        normalize: str = 'zscore',
+        missing_method: str = 'forward'
+    ) -> pd.DataFrame:
+        """
+        ฟังก์ชันหลักสำหรับเก็บและประมวลผลข้อมูล
+        
+        Args:
+            symbol (str): สัญลักษณ์คู่เหรียญ
+            interval (str): กรอบเวลา
+            start_date (Optional[str]): วันที่เริ่มต้น
+            end_date (Optional[str]): วันที่สิ้นสุด
+            days (Optional[int]): จำนวนวันย้อนหลัง
+            testnet (bool): ใช้ testnet หรือไม่
+            update (bool): อัพเดทข้อมูลเดิมหรือไม่
+            process (bool): ประมวลผลข้อมูลหรือไม่
+            normalize (str): วิธีการทำ normalization
+            missing_method (str): วิธีการจัดการข้อมูลที่หายไป
+            
+        Returns:
+            pd.DataFrame: ข้อมูลที่ประมวลผลแล้ว
+        """
+        # คำนวณวันที่เริ่มต้นจากจำนวนวัน
+        if days:
+            start_date = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime('%Y-%m-%d')
+        
+        # สร้าง DataCollector
+        collector = BinanceDataCollector(
+            symbol=symbol,
+            interval=interval,
+            start_date=start_date,
+            end_date=end_date,
+            testnet=testnet
+        )
+        
+        # ถ้าระบุให้อัพเดทข้อมูล
+        if update:
+            logger.info("กำลังอัพเดทข้อมูลให้เป็นปัจจุบัน")
+            df = collector.update_historical_data()
+        else:
+            # เก็บข้อมูลใหม่
+            logger.info("กำลังเก็บข้อมูลใหม่")
+            df = collector.get_historical_klines()
+        
+        logger.info(f"เก็บข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(df)} แถว")
+        
+        # ถ้าระบุให้ประมวลผลข้อมูล
+        if process and not df.empty:
+            logger.info("กำลังประมวลผลข้อมูล")
+            # สร้าง features
+            from data.feature_engineering import FeatureEngineering
+            fe = FeatureEngineering(df=df)
+            processed_df = fe.process_data_pipeline(
+                normalize_method=normalize,
+                missing_method=missing_method
+            )
+            
+            logger.info(f"ประมวลผลข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(processed_df)} แถว และ {len(processed_df.columns)} คอลัมน์")
+            return processed_df
+            
+        return df
 
 if __name__ == "__main__":
-    # ตัวอย่างการใช้งาน
-    collector = BinanceDataCollector(symbol='BTCUSDT', interval='1h', testnet=True)
+    import argparse
     
-    # ดึงข้อมูลแท่งเทียนย้อนหลัง
-    klines_df = collector.get_historical_klines()
-    print(f"จำนวนข้อมูลแท่งเทียน: {len(klines_df)}")
+    parser = argparse.ArgumentParser(description='เก็บข้อมูลราคาและปริมาณการซื้อขายจาก Binance')
+    
+    parser.add_argument('--symbol', type=str, default='BTCUSDT',
+                        help='สัญลักษณ์ของคู่เหรียญ (เช่น BTCUSDT)')
+    parser.add_argument('--interval', type=str, default='1h',
+                        help='ช่วงเวลาของแท่งเทียน (1m, 5m, 15m, 1h, 4h, 1d)')
+    parser.add_argument('--days', type=int, default=None,
+                        help='จำนวนวันย้อนหลังที่ต้องการเก็บข้อมูล')
+    parser.add_argument('--start_date', type=str, default=None,
+                        help='วันที่เริ่มต้นในรูปแบบ YYYY-MM-DD')
+    parser.add_argument('--end_date', type=str, default=None,
+                        help='วันที่สิ้นสุดในรูปแบบ YYYY-MM-DD')
+    parser.add_argument('--testnet', action='store_true',
+                        help='ใช้ testnet')
+    parser.add_argument('--update', action='store_true',
+                        help='อัพเดทข้อมูลเดิมให้เป็นปัจจุบัน')
+    parser.add_argument('--process', action='store_true',
+                        help='ประมวลผลข้อมูลหลังจากเก็บข้อมูลเสร็จ')
+    parser.add_argument('--normalize', type=str, default='zscore',
+                        help='วิธีการทำ normalization (zscore หรือ minmax)')
+    parser.add_argument('--missing_method', type=str, default='forward',
+                        help='วิธีการจัดการกับข้อมูลที่หายไป (forward, backward, interpolate, drop)')
+    
+    args = parser.parse_args()
+    
+    BinanceDataCollector.collect_and_process_data(
+        symbol=args.symbol,
+        interval=args.interval,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        days=args.days,
+        testnet=args.testnet,
+        update=args.update,
+        process=args.process,
+        normalize=args.normalize,
+        missing_method=args.missing_method
+    )
