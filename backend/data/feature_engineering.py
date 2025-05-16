@@ -5,7 +5,7 @@
 import os
 import pandas as pd
 import numpy as np
-import talib
+import ta
 import logging
 import datetime
 
@@ -63,52 +63,55 @@ class FeatureEngineering:
         """
         df = self.df.copy()
         
-        # ดึงข้อมูลราคาและปริมาณ
-        open_price = df['open'].values
-        high_price = df['high'].values
-        low_price = df['low'].values
-        close_price = df['close'].values
-        volume = df['volume'].values
-        
         # 1. ค่าเฉลี่ยเคลื่อนที่ (Moving Averages)
         logger.info("กำลังเพิ่ม Moving Averages")
         # Simple Moving Averages (SMA)
-        df['sma_10'] = talib.SMA(close_price, timeperiod=10)
-        df['sma_30'] = talib.SMA(close_price, timeperiod=30)
-        df['sma_50'] = talib.SMA(close_price, timeperiod=50)
+        df['sma_10'] = ta.trend.sma_indicator(df['close'], window=10)
+        df['sma_30'] = ta.trend.sma_indicator(df['close'], window=30)
+        df['sma_50'] = ta.trend.sma_indicator(df['close'], window=50)
         
         # Exponential Moving Averages (EMA)
-        df['ema_10'] = talib.EMA(close_price, timeperiod=10)
-        df['ema_30'] = talib.EMA(close_price, timeperiod=30)
+        df['ema_10'] = ta.trend.ema_indicator(df['close'], window=10)
+        df['ema_30'] = ta.trend.ema_indicator(df['close'], window=30)
         
         # 2. ดัชนีกำลังสัมพัทธ์ (Relative Strength Index: RSI)
         logger.info("กำลังเพิ่ม RSI")
-        df['rsi_14'] = talib.RSI(close_price, timeperiod=14)
+        df['rsi_14'] = ta.momentum.rsi(df['close'], window=14)
         
         # 3. MACD (Moving Average Convergence Divergence)
         logger.info("กำลังเพิ่ม MACD")
-        macd, macd_signal, macd_hist = talib.MACD(
-            close_price, fastperiod=12, slowperiod=26, signalperiod=9
+        macd = ta.trend.MACD(
+            df['close'], 
+            window_slow=26,
+            window_fast=12,
+            window_sign=9
         )
-        df['macd'] = macd
-        df['macd_signal'] = macd_signal
-        df['macd_hist'] = macd_hist
+        df['macd'] = macd.macd()
+        df['macd_signal'] = macd.macd_signal()
+        df['macd_hist'] = macd.macd_diff()
         
         # 4. Bollinger Bands
         logger.info("กำลังเพิ่ม Bollinger Bands")
-        upper, middle, lower = talib.BBANDS(
-            close_price, timeperiod=20, nbdevup=2, nbdevdn=2, matype=0
+        bollinger = ta.volatility.BollingerBands(
+            df['close'], 
+            window=20, 
+            window_dev=2
         )
-        df['bb_upper'] = upper
-        df['bb_middle'] = middle
-        df['bb_lower'] = lower
+        df['bb_upper'] = bollinger.bollinger_hband()
+        df['bb_middle'] = bollinger.bollinger_mavg()
+        df['bb_lower'] = bollinger.bollinger_lband()
         
         # คำนวณ %B (ตำแหน่งราคาใน Bollinger Bands)
-        df['bb_pct_b'] = (close_price - lower) / (upper - lower)
+        df['bb_pct_b'] = bollinger.bollinger_pband()
         
         # 5. Average True Range (ATR)
         logger.info("กำลังเพิ่ม ATR")
-        df['atr_14'] = talib.ATR(high_price, low_price, close_price, timeperiod=14)
+        df['atr_14'] = ta.volatility.average_true_range(
+            df['high'], 
+            df['low'], 
+            df['close'], 
+            window=14
+        )
         
         # 6. ผลตอบแทนรายวัน (Daily Return)
         df['daily_return'] = df['close'].pct_change()
