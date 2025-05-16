@@ -1,11 +1,11 @@
 from binance.client import Client
-from config import TESTNET_API_KEY, TESTNET_API_SECRET
+from config.credentials import API_KEY, API_SECRET
 import time
 from datetime import datetime
 
 class Order:
     def __init__(self):
-        self.client = Client(TESTNET_API_KEY, TESTNET_API_SECRET, testnet=True)
+        self.client = Client(API_KEY, API_SECRET, testnet=True)
         self.order_count = 0
         self.max_orders = 5
         self.orders = []  # เก็บประวัติคำสั่ง
