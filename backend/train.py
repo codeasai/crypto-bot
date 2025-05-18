@@ -44,18 +44,19 @@ def preview_data_loading(symbol: str, timeframe: str, start_date: str, end_date:
     logger.info(f"วันที่สิ้นสุด: {end_date}")
     
     # คำนวณจำนวนแท่งข้อมูลโดยประมาณ
-    if timeframe == '1m':
-        bars_per_day = 1440
-    elif timeframe == '5m':
-        bars_per_day = 288
-    elif timeframe == '15m':
-        bars_per_day = 96
+    bars_per_day = 0
+    if timeframe.endswith('m'):
+        minutes = int(timeframe[:-1])
+        bars_per_day = int(24 * 60 / minutes)
     elif timeframe == '1h':
         bars_per_day = 24
     elif timeframe == '4h':
         bars_per_day = 6
     elif timeframe == '1d':
         bars_per_day = 1
+    else:
+        logger.error(f"ไม่รองรับกรอบเวลา {timeframe}")
+        return False
     
     start = datetime.strptime(start_date, '%Y-%m-%d')
     end = datetime.strptime(end_date, '%Y-%m-%d')
@@ -188,7 +189,8 @@ def train_dqn_agent(
         
         # ตรวจสอบไฟล์ข้อมูลที่มีอยู่
         current_dir = os.path.dirname(os.path.abspath(__file__))
-        datasets_dir = os.path.join(current_dir, 'data', 'datasets')
+        parent_dir = os.path.dirname(current_dir)
+        datasets_dir = os.path.join(parent_dir, 'data', 'datasets')
         if not os.path.exists(datasets_dir):
             os.makedirs(datasets_dir)
             
