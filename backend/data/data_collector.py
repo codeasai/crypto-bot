@@ -7,8 +7,7 @@ import time
 import datetime
 import pandas as pd
 import numpy as np
-from binance.client import Client
-from binance.exceptions import BinanceAPIException
+import ccxt
 import logging
 import sys
 from typing import Optional, Dict, Any
@@ -31,44 +30,38 @@ class BinanceDataCollector:
     คลาสสำหรับการเก็บข้อมูลราคาและปริมาณการซื้อขายจาก Binance Exchange
     """
     
-    def __init__(self, symbol: str = None, interval: str = None, 
-                 start_date: Optional[str] = None, end_date: Optional[str] = None, 
-                 testnet: bool = True):
+    def __init__(self, symbol: str, interval: str, start_date: str, end_date: str, testnet: bool = True):
         """
-        เริ่มต้นการเชื่อมต่อกับ Binance API
+        เริ่มต้นตัวเก็บข้อมูลจาก Binance
         
         Args:
-            symbol (str): สัญลักษณ์ของคู่เหรียญ (เช่น 'BTCUSDT')
-            interval (str): ช่วงเวลาของแท่งเทียน (เช่น '1h', '1d')
-            start_date (str): วันที่เริ่มต้นในรูปแบบ 'YYYY-MM-DD'
-            end_date (str): วันที่สิ้นสุดในรูปแบบ 'YYYY-MM-DD'
+            symbol (str): คู่เหรียญ (เช่น 'BTC/USDT')
+            interval (str): กรอบเวลา (เช่น '5m', '1h', '4h', '1d')
+            start_date (str): วันที่เริ่มต้น (YYYY-MM-DD)
+            end_date (str): วันที่สิ้นสุด (YYYY-MM-DD)
             testnet (bool): ใช้ testnet หรือไม่
         """
-        # ตั้งค่าพารามิเตอร์
-        self.symbol = symbol or TRADING_CONFIG['symbol']
-        self.interval = interval or TRADING_CONFIG['interval']
-        self.testnet = testnet
+        self.symbol = symbol.replace('USDT', '/USDT')  # แปลง BTCUSDT เป็น BTC/USDT
+        self.interval = interval
+        self.start_date = pd.to_datetime(start_date)
+        self.end_date = pd.to_datetime(end_date)
         
-        # สร้าง Binance Client
-        try:
-            self.client = Client(API_KEY, API_SECRET, testnet=testnet)
-            logger.info(f"เชื่อมต่อกับ Binance {'Testnet' if testnet else 'Mainnet'} สำเร็จ")
-        except Exception as e:
-            logger.error(f"ไม่สามารถเชื่อมต่อกับ Binance ได้: {e}")
-            raise
+        # ตั้งค่า exchange
+        self.exchange = ccxt.binance({
+            'enableRateLimit': True,
+            'options': {
+                'defaultType': 'spot'
+            }
+        })
         
-        # กำหนดวันที่เริ่มต้นและสิ้นสุด
-        if start_date:
-            self.start_date = datetime.datetime.strptime(start_date, '%Y-%m-%d')
-        else:
-            # ใช้ค่าเริ่มต้นจาก config
-            days_ago = DATA_CONFIG['historical_days']
-            self.start_date = datetime.datetime.now() - datetime.timedelta(days=days_ago)
+        if testnet:
+            self.exchange.set_sandbox_mode(True)
             
-        self.end_date = datetime.datetime.strptime(end_date, '%Y-%m-%d') if end_date else datetime.datetime.now()
+        # ตั้งค่า logger
+        self.logger = logging.getLogger(__name__)
         
         # สร้างโฟลเดอร์สำหรับเก็บข้อมูล
-        self.data_dir = os.path.join(DATA_CONFIG['data_dir'], 'datasets')
+        self.data_dir = os.path.join(DATA_CONFIG['data_dir'])
         if not os.path.exists(self.data_dir):
             os.makedirs(self.data_dir)
             
@@ -76,102 +69,80 @@ class BinanceDataCollector:
     
     def get_historical_klines(self, save_to_csv: bool = True) -> pd.DataFrame:
         """
-        ดึงข้อมูลแท่งเทียนย้อนหลัง
+        ดึงข้อมูลราคาย้อนหลัง
         
-        Args:
-            save_to_csv (bool): บันทึกข้อมูลเป็นไฟล์ CSV หรือไม่
-            
         Returns:
-            pd.DataFrame: ข้อมูลแท่งเทียน
+            pd.DataFrame: ข้อมูลราคาย้อนหลัง
         """
-        # แปลงวันที่เป็น timestamp ในรูปแบบที่ Binance ต้องการ
-        start_ts = int(self.start_date.timestamp() * 1000)
-        end_ts = int(self.end_date.timestamp() * 1000)
-        
-        logger.info(f"กำลังดึงข้อมูล {self.symbol} ตั้งแต่ {self.start_date} ถึง {self.end_date}")
-        
-        # เตรียมรายการสำหรับเก็บข้อมูล
-        all_klines = []
-        
-        # คำนวณจำนวนแท่งเทียนที่ต้องการ
-        limit = 1000  # Binance จำกัดการเรียกข้อมูลสูงสุด 1000 แท่งต่อครั้ง
-        
-        # ดึงข้อมูลแบบแบ่งตามช่วงเวลา
-        current_ts = start_ts
-        
-        while current_ts < end_ts:
-            try:
-                # เรียกใช้ API ของ Binance
-                klines = self.client.get_klines(
-                    symbol=self.symbol,
-                    interval=self.interval,
-                    startTime=current_ts,
-                    endTime=end_ts,
-                    limit=limit
-                )
-                
-                # ถ้าไม่มีข้อมูล ให้หยุด
-                if not klines:
-                    logger.warning(f"ไม่พบข้อมูลในช่วงเวลา {datetime.datetime.fromtimestamp(current_ts/1000)}")
-                    break
-                
-                # เพิ่มข้อมูลเข้าไปในรายการ
-                all_klines.extend(klines)
-                
-                # อัพเดท timestamp สุดท้าย
-                current_ts = klines[-1][0] + 1
-                
-                # หน่วงเวลาเพื่อไม่ให้เกิน rate limit ของ Binance
-                time.sleep(0.5)
-                
-                logger.info(f"ดึงข้อมูลแล้ว {len(all_klines)} แท่ง")
-                
-            except BinanceAPIException as e:
-                logger.error(f"เกิดข้อผิดพลาดจาก Binance API: {e}")
-                # หน่วงเวลานานขึ้นถ้าเกิด rate limit
-                time.sleep(60)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาด: {e}")
-                break
-        
-        if not all_klines:
-            logger.error("ไม่สามารถดึงข้อมูลได้")
-            return pd.DataFrame()
-        
-        # แปลงข้อมูลเป็น DataFrame
-        columns = [
-            'timestamp', 'open', 'high', 'low', 'close', 'volume',
-            'close_time', 'quote_asset_volume', 'number_of_trades',
-            'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'
-        ]
-        
-        df = pd.DataFrame(all_klines, columns=columns)
-        
-        # แปลงประเภทข้อมูล
-        numeric_columns = ['open', 'high', 'low', 'close', 'volume',
-                          'quote_asset_volume', 'number_of_trades',
-                          'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume']
-        
-        df[numeric_columns] = df[numeric_columns].astype(float)
-        
-        # แปลง timestamp เป็น datetime
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df['close_time'] = pd.to_datetime(df['close_time'], unit='ms')
-        
-        # เพิ่มคอลัมน์วันที่
-        df['date'] = df['timestamp'].dt.date
-        
-        # ลบคอลัมน์ที่ไม่จำเป็น
-        df = df.drop(['close_time', 'ignore'], axis=1)
-        
-        # บันทึกเป็นไฟล์ CSV
-        if save_to_csv and not df.empty:
-            file_name = f"{self.symbol}_{self.interval}_{self.start_date.strftime('%Y%m%d')}_{self.end_date.strftime('%Y%m%d')}.csv"
+        try:
+            # ตรวจสอบว่ามีไฟล์ข้อมูลอยู่แล้วหรือไม่
+            file_name = f"{self.symbol.replace('/', '')}_{self.interval}_{self.start_date.strftime('%Y%m%d')}_{self.end_date.strftime('%Y%m%d')}.csv"
             file_path = os.path.join(self.data_dir, file_name)
-            df.to_csv(file_path, index=False)
-            logger.info(f"บันทึกข้อมูลไปที่ {file_path}")
-        
-        return df
+            
+            if os.path.exists(file_path):
+                self.logger.info(f"พบไฟล์ข้อมูล {file_path}")
+                df = pd.read_csv(file_path)
+                df['timestamp'] = pd.to_datetime(df['timestamp'])
+                df.set_index('timestamp', inplace=True)
+                return df
+            
+            # ถ้าไม่มีไฟล์ ให้ดึงข้อมูลจาก exchange
+            self.logger.info("ไม่พบไฟล์ข้อมูล กำลังดึงข้อมูลจาก exchange...")
+            
+            # แปลง interval เป็นรูปแบบที่ ccxt ใช้
+            interval_map = {
+                '1m': '1m',
+                '5m': '5m',
+                '15m': '15m',
+                '30m': '30m',
+                '1h': '1h',
+                '4h': '4h',
+                '1d': '1d'
+            }
+            timeframe = interval_map.get(self.interval, '1h')
+            
+            # ดึงข้อมูล
+            ohlcv = self.exchange.fetch_ohlcv(
+                symbol=self.symbol,
+                timeframe=timeframe,
+                since=int(self.start_date.timestamp() * 1000),
+                limit=1000  # จำนวนแท่งสูงสุดที่ดึงได้ต่อครั้ง
+            )
+            
+            # แปลงเป็น DataFrame
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+            df.set_index('timestamp', inplace=True)
+            
+            # กรองข้อมูลตามช่วงวันที่
+            df = df[(df.index >= self.start_date) & (df.index <= self.end_date)]
+            
+            self.logger.info(f"ดึงข้อมูลสำเร็จ: {len(df)} แท่ง")
+            
+            # ตรวจสอบความถูกต้องของ timestamp
+            if df['timestamp'].min() < datetime.datetime(2020, 1, 1):
+                self.logger.error(f"พบ timestamp ที่ไม่ถูกต้อง: {df['timestamp'].min()}")
+                return pd.DataFrame()
+            
+            # เพิ่มคอลัมน์วันที่
+            df['date'] = df['timestamp'].dt.date
+            
+            # ลบคอลัมน์ที่ไม่จำเป็น
+            df = df.drop(['close_time', 'ignore'], axis=1)
+            
+            # ตั้งค่า index เป็น timestamp
+            df.set_index('timestamp', inplace=True)
+            
+            # บันทึกเป็นไฟล์ CSV
+            if save_to_csv and not df.empty:
+                df.to_csv(file_path)
+                self.logger.info(f"บันทึกข้อมูลไปที่ {file_path}")
+            
+            return df
+            
+        except Exception as e:
+            self.logger.error(f"เกิดข้อผิดพลาดในการดึงข้อมูล: {str(e)}")
+            return pd.DataFrame()
     
     def update_historical_data(self) -> pd.DataFrame:
         """
@@ -206,15 +177,15 @@ class BinanceDataCollector:
         
         # ถ้าวันที่เริ่มต้นอยู่ในอนาคต ไม่ต้องอัพเดท
         if self.start_date > datetime.datetime.now():
-            logger.info("ข้อมูลเป็นปัจจุบันแล้ว")
+            self.logger.info("ข้อมูลเป็นปัจจุบันแล้ว")
             return df
         
         # ดึงข้อมูลใหม่
-        logger.info(f"กำลังอัพเดทข้อมูลตั้งแต่ {self.start_date}")
+        self.logger.info(f"กำลังอัพเดทข้อมูลตั้งแต่ {self.start_date}")
         new_data = self.get_historical_klines(save_to_csv=False)
         
         if new_data.empty:
-            logger.info("ไม่มีข้อมูลใหม่")
+            self.logger.info("ไม่มีข้อมูลใหม่")
             return df
         
         # รวมข้อมูลเก่าและใหม่
@@ -230,7 +201,7 @@ class BinanceDataCollector:
         file_name = f"{self.symbol}_{self.interval}_{self.start_date.strftime('%Y%m%d')}_{self.end_date.strftime('%Y%m%d')}.csv"
         file_path = os.path.join(self.data_dir, file_name)
         df.to_csv(file_path, index=False)
-        logger.info(f"บันทึกข้อมูลที่อัพเดทแล้วไปที่ {file_path}")
+        self.logger.info(f"บันทึกข้อมูลที่อัพเดทแล้วไปที่ {file_path}")
         
         return df
 
@@ -280,18 +251,18 @@ class BinanceDataCollector:
         
         # ถ้าระบุให้อัพเดทข้อมูล
         if update:
-            logger.info("กำลังอัพเดทข้อมูลให้เป็นปัจจุบัน")
+            self.logger.info("กำลังอัพเดทข้อมูลให้เป็นปัจจุบัน")
             df = collector.update_historical_data()
         else:
             # เก็บข้อมูลใหม่
-            logger.info("กำลังเก็บข้อมูลใหม่")
+            self.logger.info("กำลังเก็บข้อมูลใหม่")
             df = collector.get_historical_klines()
         
-        logger.info(f"เก็บข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(df)} แถว")
+        self.logger.info(f"เก็บข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(df)} แถว")
         
         # ถ้าระบุให้ประมวลผลข้อมูล
         if process and not df.empty:
-            logger.info("กำลังประมวลผลข้อมูล")
+            self.logger.info("กำลังประมวลผลข้อมูล")
             # สร้าง features
             from data.feature_engineering import FeatureEngineering
             fe = FeatureEngineering(df=df)
@@ -300,7 +271,7 @@ class BinanceDataCollector:
                 missing_method=missing_method
             )
             
-            logger.info(f"ประมวลผลข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(processed_df)} แถว และ {len(processed_df.columns)} คอลัมน์")
+            self.logger.info(f"ประมวลผลข้อมูลเสร็จสิ้น ได้ข้อมูลทั้งหมด {len(processed_df)} แถว และ {len(processed_df.columns)} คอลัมน์")
             return processed_df
             
         return df

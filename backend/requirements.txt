@@ -7,15 +7,13 @@ PyJWT
 python-dotenv
 
 # trading
-numpy
 pandas
-tensorflow>=2.5.0
 gym
 stable-baselines3
 matplotlib
 seaborn
-python-binance
 ta
 scikit-learn
 pyyaml
 ccxt
+keras

@@ -10,7 +10,9 @@ import ta
 from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 from .data_collector import BinanceDataCollector
+import logging
 
+logger = logging.getLogger(__name__)
 
 class DataProcessor:
     """
@@ -115,107 +117,211 @@ class DataProcessor:
     
     def add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        เพิ่มตัวชี้วัดทางเทคนิคเข้าไปในข้อมูล
+        เพิ่ม technical indicators ให้กับข้อมูล
         
         Args:
-            df (pd.DataFrame): DataFrame ที่มีข้อมูลราคา OHLCV
+            df (pd.DataFrame): ข้อมูลที่ต้องการเพิ่ม indicators
             
         Returns:
-            pd.DataFrame: DataFrame ที่เพิ่มตัวชี้วัดทางเทคนิคแล้ว
+            pd.DataFrame: ข้อมูลที่มี indicators เพิ่มเติม
         """
-        # ตรวจสอบความยาวของข้อมูล
-        if len(df) < 100:  # ต้องการข้อมูลอย่างน้อย 100 แท่ง
-            raise ValueError(f"ข้อมูลไม่เพียงพอ ต้องการอย่างน้อย 100 แท่ง แต่มีเพียง {len(df)} แท่ง")
+        try:
+            # ตรวจสอบข้อมูลที่เข้ามา
+            logger.info("ข้อมูลก่อนเพิ่ม technical indicators:")
+            logger.info(f"\n{df.dtypes}")
             
-        # สร้าง DataFrame ใหม่เพื่อไม่เปลี่ยนแปลงข้อมูลต้นฉบับ
-        df_with_indicators = df.copy()
-        
-        # 1. Moving Averages
-        df_with_indicators['sma_7'] = ta.trend.sma_indicator(df['close'], window=7)
-        df_with_indicators['sma_25'] = ta.trend.sma_indicator(df['close'], window=25)
-        df_with_indicators['sma_99'] = ta.trend.sma_indicator(df['close'], window=99)
-        
-        df_with_indicators['ema_7'] = ta.trend.ema_indicator(df['close'], window=7)
-        df_with_indicators['ema_25'] = ta.trend.ema_indicator(df['close'], window=25)
-        df_with_indicators['ema_99'] = ta.trend.ema_indicator(df['close'], window=99)
-        
-        # 2. RSI (Relative Strength Index)
-        df_with_indicators['rsi_14'] = ta.momentum.rsi(df['close'], window=14)
-        
-        # 3. MACD (Moving Average Convergence Divergence)
-        macd = ta.trend.MACD(df['close'], window_slow=26, window_fast=12, window_sign=9)
-        df_with_indicators['macd'] = macd.macd()
-        df_with_indicators['macd_signal'] = macd.macd_signal()
-        df_with_indicators['macd_hist'] = macd.macd_diff()
-        
-        # 4. Bollinger Bands
-        bollinger = ta.volatility.BollingerBands(df['close'], window=20, window_dev=2)
-        df_with_indicators['bb_upper'] = bollinger.bollinger_hband()
-        df_with_indicators['bb_middle'] = bollinger.bollinger_mavg()
-        df_with_indicators['bb_lower'] = bollinger.bollinger_lband()
-        
-        # 5. Stochastic Oscillator
-        stoch = ta.momentum.StochasticOscillator(df['high'], df['low'], df['close'], window=14, smooth_window=3)
-        df_with_indicators['stoch_k'] = stoch.stoch()
-        df_with_indicators['stoch_d'] = stoch.stoch_signal()
-        
-        # 6. ADX (Average Directional Index)
-        try:
-            df_with_indicators['adx'] = ta.trend.adx(df['high'], df['low'], df['close'], window=14)
-        except ValueError as e:
-            print(f"ไม่สามารถคำนวณ ADX ได้: {e}")
-            df_with_indicators['adx'] = np.nan
-        
-        # 7. OBV (On-Balance Volume)
-        df_with_indicators['obv'] = ta.volume.on_balance_volume(df['close'], df['volume'])
-        
-        # 8. ATR (Average True Range) - ค่าความผันผวน
-        try:
-            df_with_indicators['atr'] = ta.volatility.average_true_range(df['high'], df['low'], df['close'], window=14)
-        except ValueError as e:
-            print(f"ไม่สามารถคำนวณ ATR ได้: {e}")
-            df_with_indicators['atr'] = np.nan
-        
-        # 9. CCI (Commodity Channel Index)
-        try:
-            df_with_indicators['cci'] = ta.trend.cci(df['high'], df['low'], df['close'], window=14)
-        except ValueError as e:
-            print(f"ไม่สามารถคำนวณ CCI ได้: {e}")
-            df_with_indicators['cci'] = np.nan
-        
-        # 10. MFI (Money Flow Index) - ปริมาณการไหลของเงินทุน
-        try:
-            df_with_indicators['mfi'] = ta.volume.money_flow_index(df['high'], df['low'], df['close'], df['volume'], window=14)
-        except ValueError as e:
-            print(f"ไม่สามารถคำนวณ MFI ได้: {e}")
-            df_with_indicators['mfi'] = np.nan
-        
-        # 11. Price Rate of Change
-        df_with_indicators['roc'] = ta.momentum.roc(df['close'], window=10)
-        
-        # คำนวณราคาเทียบกับค่าเฉลี่ยเคลื่อนที่ (เปอร์เซ็นต์)
-        df_with_indicators['close_sma_7_pct'] = (df['close'] - df_with_indicators['sma_7']) / df_with_indicators['sma_7']
-        df_with_indicators['close_sma_25_pct'] = (df['close'] - df_with_indicators['sma_25']) / df_with_indicators['sma_25']
-        df_with_indicators['close_sma_99_pct'] = (df['close'] - df_with_indicators['sma_99']) / df_with_indicators['sma_99']
-        
-        # คำนวณการเปลี่ยนแปลงของราคา (เปอร์เซ็นต์)
-        df_with_indicators['close_pct_change_1'] = df['close'].pct_change(1)
-        df_with_indicators['close_pct_change_5'] = df['close'].pct_change(5)
-        df_with_indicators['close_pct_change_10'] = df['close'].pct_change(10)
-        
-        # คำนวณความผันผวนย้อนหลัง
-        df_with_indicators['volatility_5'] = df['close'].pct_change().rolling(5).std()
-        df_with_indicators['volatility_15'] = df['close'].pct_change().rolling(15).std()
-        
-        # ความสัมพันธ์กับปริมาณการซื้อขาย
-        df_with_indicators['volume_sma_5'] = ta.trend.sma_indicator(df['volume'], window=5)
-        df_with_indicators['volume_sma_20'] = ta.trend.sma_indicator(df['volume'], window=20)
-        df_with_indicators['volume_ratio'] = df['volume'] / df_with_indicators['volume_sma_5']
-        
-        # ลบแถวที่มีค่า NaN
-        df_with_indicators = df_with_indicators.dropna()
-        
-        return df_with_indicators
+            # ตรวจสอบคอลัมน์ที่จำเป็น
+            required_columns = ['open', 'high', 'low', 'close', 'volume']
+            for col in required_columns:
+                if col not in df.columns:
+                    raise ValueError(f"ไม่พบคอลัมน์ {col} ในข้อมูล")
+            
+            # แปลงข้อมูลเป็น numeric
+            df_with_indicators = df.copy()
+            for col in df_with_indicators.columns:
+                if col not in ['date', 'timestamp']:
+                    df_with_indicators[col] = pd.to_numeric(df_with_indicators[col], errors='coerce')
+            
+            # ตรวจสอบและจัดการค่า NaN
+            nan_counts = df_with_indicators.isna().sum()
+            if nan_counts.any():
+                logger.warning(f"พบค่า NaN ในข้อมูล: {nan_counts[nan_counts > 0]}")
+                # แทนที่ค่า NaN ด้วยค่าเฉลี่ย
+                df_with_indicators = df_with_indicators.fillna(df_with_indicators.mean())
+            
+            # ตรวจสอบและจัดการค่า inf
+            inf_mask = np.isinf(df_with_indicators.select_dtypes(include=np.number))
+            if inf_mask.any().any():
+                logger.warning("พบค่า inf ในข้อมูล กำลังแทนที่ด้วยค่า NaN")
+                df_with_indicators = df_with_indicators.replace([np.inf, -np.inf], np.nan)
+                df_with_indicators = df_with_indicators.fillna(df_with_indicators.mean())
+            
+            # ตรวจสอบและจัดการค่าลบ
+            for col in df_with_indicators.select_dtypes(include=np.number).columns:
+                if (df_with_indicators[col] < 0).any():
+                    logger.warning(f"พบค่าลบในคอลัมน์ {col} กำลังแปลงเป็นค่าสัมบูรณ์")
+                    df_with_indicators[col] = df_with_indicators[col].abs()
+            
+            # ตรวจสอบและจัดการค่า 0
+            for col in df_with_indicators.select_dtypes(include=np.number).columns:
+                if (df_with_indicators[col] == 0).any():
+                    logger.warning(f"พบค่า 0 ในคอลัมน์ {col} กำลังแทนที่ด้วยค่าเฉลี่ย")
+                    mean_value = df_with_indicators[col].mean()
+                    df_with_indicators[col] = df_with_indicators[col].replace(0, mean_value)
+            
+            # ตรวจสอบความยาวของข้อมูล
+            if len(df_with_indicators) < 100:
+                raise ValueError(f"ข้อมูลไม่เพียงพอ ต้องการอย่างน้อย 100 แท่ง แต่มีเพียง {len(df_with_indicators)} แท่ง")
+            
+            # ตรวจสอบการเรียงลำดับข้อมูล
+            if not df_with_indicators.index.is_monotonic_increasing:
+                logger.warning("ข้อมูลไม่ได้เรียงตามเวลา กำลังเรียงลำดับใหม่")
+                df_with_indicators = df_with_indicators.sort_index()
+            
+            # คำนวณ indicators
+            try:
+                # Moving Averages
+                df_with_indicators['sma_7'] = ta.trend.sma_indicator(df_with_indicators['close'], window=7, fillna=True)
+                df_with_indicators['sma_25'] = ta.trend.sma_indicator(df_with_indicators['close'], window=25, fillna=True)
+                df_with_indicators['sma_99'] = ta.trend.sma_indicator(df_with_indicators['close'], window=99, fillna=True)
+                df_with_indicators['ema_7'] = ta.trend.ema_indicator(df_with_indicators['close'], window=7, fillna=True)
+                df_with_indicators['ema_25'] = ta.trend.ema_indicator(df_with_indicators['close'], window=25, fillna=True)
+                df_with_indicators['ema_99'] = ta.trend.ema_indicator(df_with_indicators['close'], window=99, fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Moving Averages: {str(e)}")
+                raise
+            
+            try:
+                # RSI
+                df_with_indicators['rsi_14'] = ta.momentum.rsi(df_with_indicators['close'], window=14, fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ RSI: {str(e)}")
+                raise
+            
+            try:
+                # MACD
+                macd = ta.trend.MACD(df_with_indicators['close'], window_slow=26, window_fast=12, window_sign=9, fillna=True)
+                df_with_indicators['macd'] = macd.macd()
+                df_with_indicators['macd_signal'] = macd.macd_signal()
+                df_with_indicators['macd_hist'] = macd.macd_diff()
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ MACD: {str(e)}")
+                raise
+            
+            try:
+                # Bollinger Bands
+                bollinger = ta.volatility.BollingerBands(df_with_indicators['close'], window=20, window_dev=2, fillna=True)
+                df_with_indicators['bb_upper'] = bollinger.bollinger_hband()
+                df_with_indicators['bb_middle'] = bollinger.bollinger_mavg()
+                df_with_indicators['bb_lower'] = bollinger.bollinger_lband()
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Bollinger Bands: {str(e)}")
+                raise
+            
+            try:
+                # Stochastic Oscillator
+                stoch = ta.momentum.StochasticOscillator(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, smooth_window=3, fillna=True)
+                df_with_indicators['stoch_k'] = stoch.stoch()
+                df_with_indicators['stoch_d'] = stoch.stoch_signal()
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Stochastic Oscillator: {str(e)}")
+                raise
+            
+            try:
+                # ADX
+                df_with_indicators['adx'] = ta.trend.adx(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ ADX: {str(e)}")
+                raise
+            
+            try:
+                # OBV
+                df_with_indicators['obv'] = ta.volume.on_balance_volume(df_with_indicators['close'], df_with_indicators['volume'], fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ OBV: {str(e)}")
+                raise
+            
+            try:
+                # ATR
+                df_with_indicators['atr'] = ta.volatility.average_true_range(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ ATR: {str(e)}")
+                raise
+            
+            try:
+                # CCI
+                df_with_indicators['cci'] = ta.trend.cci(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=20, fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ CCI: {str(e)}")
+                raise
+            
+            try:
+                # MFI
+                df_with_indicators['mfi'] = ta.volume.money_flow_index(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], df_with_indicators['volume'], window=14, fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ MFI: {str(e)}")
+                raise
+            
+            try:
+                # ROC
+                df_with_indicators['roc'] = ta.momentum.roc(df_with_indicators['close'], window=12, fillna=True)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ ROC: {str(e)}")
+                raise
+            
+            try:
+                # Price to Moving Average Ratios
+                df_with_indicators['close_sma_7_pct'] = df_with_indicators['close'] / df_with_indicators['sma_7'] - 1
+                df_with_indicators['close_sma_25_pct'] = df_with_indicators['close'] / df_with_indicators['sma_25'] - 1
+                df_with_indicators['close_sma_99_pct'] = df_with_indicators['close'] / df_with_indicators['sma_99'] - 1
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Price to Moving Average Ratios: {str(e)}")
+                raise
+            
+            try:
+                # Price Changes
+                df_with_indicators['close_pct_change_1'] = df_with_indicators['close'].pct_change(1).fillna(0)
+                df_with_indicators['close_pct_change_5'] = df_with_indicators['close'].pct_change(5).fillna(0)
+                df_with_indicators['close_pct_change_10'] = df_with_indicators['close'].pct_change(10).fillna(0)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Price Changes: {str(e)}")
+                raise
+            
+            try:
+                # Volatility
+                df_with_indicators['volatility_5'] = df_with_indicators['close'].rolling(window=5).std().fillna(0)
+                df_with_indicators['volatility_15'] = df_with_indicators['close'].rolling(window=15).std().fillna(0)
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Volatility: {str(e)}")
+                raise
+            
+            try:
+                # Volume Indicators
+                df_with_indicators['volume_sma_5'] = ta.trend.sma_indicator(df_with_indicators['volume'], window=5, fillna=True)
+                df_with_indicators['volume_sma_20'] = ta.trend.sma_indicator(df_with_indicators['volume'], window=20, fillna=True)
+                df_with_indicators['volume_ratio'] = df_with_indicators['volume'] / df_with_indicators['volume_sma_20']
+            except Exception as e:
+                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Volume Indicators: {str(e)}")
+                raise
+            
+            # ตรวจสอบค่า NaN หลังคำนวณ
+            nan_counts = df_with_indicators.isna().sum()
+            if nan_counts.any():
+                logger.warning(f"พบค่า NaN ในข้อมูลหลังคำนวณ indicators:\n{nan_counts[nan_counts > 0]}")
+                # แทนที่ค่า NaN ด้วยค่าเฉลี่ย
+                df_with_indicators = df_with_indicators.fillna(df_with_indicators.mean())
+            
+            # ตรวจสอบความยาวของข้อมูล
+            if len(df_with_indicators) != len(df):
+                logger.warning(f"ความยาวของข้อมูลเปลี่ยนจาก {len(df)} เป็น {len(df_with_indicators)}")
+                # ตัดข้อมูลให้มีความยาวเท่ากับข้อมูลเดิม
+                df_with_indicators = df_with_indicators.iloc[-len(df):]
+            
+            return df_with_indicators
+            
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดในการคำนวณ technical indicators: {str(e)}")
+            raise
     
     def normalize_data(self, df: pd.DataFrame, columns_to_exclude: List[str] = ['timestamp']) -> pd.DataFrame:
         """
@@ -228,20 +334,53 @@ class DataProcessor:
         Returns:
             pd.DataFrame: DataFrame ที่ถูกปรับให้เป็นปกติแล้ว
         """
-        df_normalized = df.copy()
-        
-        # เลือกเฉพาะคอลัมน์ที่ต้องการปรับให้เป็นปกติ
-        columns_to_normalize = [col for col in df.columns if col not in columns_to_exclude]
-        
-        for col in columns_to_normalize:
-            # ตรวจสอบว่าคอลัมน์มีค่า min และ max ที่แตกต่างกันหรือไม่
-            if df[col].min() != df[col].max():
-                df_normalized[col] = (df[col] - df[col].min()) / (df[col].max() - df[col].min())
-            else:
-                # ถ้า min และ max เท่ากัน ให้ตั้งค่าเป็น 0 หรือ 0.5
-                df_normalized[col] = 0.5
+        try:
+            df_normalized = df.copy()
+            
+            # เลือกเฉพาะคอลัมน์ที่ต้องการปรับให้เป็นปกติ
+            columns_to_normalize = [col for col in df.columns if col not in columns_to_exclude]
+            
+            for col in columns_to_normalize:
+                # แปลงเป็นตัวเลข
+                df_normalized[col] = pd.to_numeric(df_normalized[col], errors='coerce')
                 
-        return df_normalized
+                # ตรวจสอบจำนวนค่า NaN
+                nan_count = df_normalized[col].isna().sum()
+                if nan_count > 0:
+                    logger.warning(f"พบค่า NaN {nan_count} ค่าในคอลัมน์ {col}")
+                    # แทนที่ค่า NaN ด้วยค่าเฉลี่ย
+                    mean_value = df_normalized[col].mean()
+                    df_normalized[col] = df_normalized[col].fillna(mean_value)
+                
+                # ตรวจสอบและแทนที่ค่า inf และ -inf
+                inf_count = df_normalized[col].isin([np.inf, -np.inf]).sum()
+                if inf_count > 0:
+                    logger.warning(f"พบค่า inf หรือ -inf {inf_count} ค่าในคอลัมน์ {col}")
+                    # แทนที่ด้วยค่า NaN แล้วใช้ค่าเฉลี่ย
+                    df_normalized[col] = df_normalized[col].replace([np.inf, -np.inf], np.nan)
+                    mean_value = df_normalized[col].mean()
+                    df_normalized[col] = df_normalized[col].fillna(mean_value)
+                
+                # ตรวจสอบว่าคอลัมน์มีค่า min และ max ที่แตกต่างกันหรือไม่
+                min_val = df_normalized[col].min()
+                max_val = df_normalized[col].max()
+                
+                if min_val != max_val:
+                    df_normalized[col] = (df_normalized[col] - min_val) / (max_val - min_val)
+                else:
+                    # ถ้า min และ max เท่ากัน ให้ตั้งค่าเป็น 0.5
+                    df_normalized[col] = 0.5
+                
+                # ตรวจสอบว่ามีค่าอยู่นอกช่วง [0, 1] หรือไม่
+                if (df_normalized[col] < 0).any() or (df_normalized[col] > 1).any():
+                    logger.warning(f"พบค่าอยู่นอกช่วง [0, 1] ในคอลัมน์ {col} กำลังปรับให้อยู่ในช่วง...")
+                    df_normalized[col] = df_normalized[col].clip(0, 1)
+            
+            return df_normalized
+            
+        except Exception as e:
+            logger.error(f"เกิดข้อผิดพลาดในการ normalize ข้อมูล: {str(e)}")
+            raise
     
     def prepare_data_for_training(self, symbol: str, timeframe: str = '1h', 
                                  start_date: Optional[str] = None, 
