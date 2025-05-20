@@ -124,3 +124,210 @@ results = train_dqn_agent(
 3. เพิ่มเทคนิคการเทรด
 4. ปรับปรุงการจัดการความเสี่ยง
 5. เพิ่มการเทรดหลายคู่เหรียญ 
+
+## การแสดงผลภาพ (Visualization)
+
+### 1. กราฟแสดงผลการเทรด
+```python
+# แสดงผลการเทรดที่ดีที่สุด
+def show_best_trading_results(env, run_dir):
+    # สร้างโฟลเดอร์สำหรับเก็บผลลัพธ์
+    results_dir = os.path.join(run_dir, 'visualization')
+    os.makedirs(results_dir, exist_ok=True)
+    
+    # สร้างและบันทึกกราฟ
+    plt.figure(figsize=(15, 10))
+    env.render(mode='human')
+    plt.savefig(os.path.join(results_dir, 'best_trading_results.png'))
+    plt.close()
+    
+    # บันทึกข้อมูลการเทรด
+    trading_data = {
+        'trades': env.trades,
+        'account_history': env.account_history,
+        'metrics': {
+            'total_profit': env.balance - env.initial_balance,
+            'total_trades': len(env.trades),
+            'win_rate': len([t for t in env.trades if t['profit'] > 0]) / len(env.trades) if env.trades else 0
+        }
+    }
+    
+    # บันทึกข้อมูลเป็น JSON
+    with open(os.path.join(results_dir, 'trading_data.json'), 'w') as f:
+        json.dump(trading_data, f, indent=4)
+```
+
+### 2. โครงสร้างไฟล์ผลลัพธ์
+```
+outputs/
+├── {symbol}_{timeframe}_{timestamp}/    # โฟลเดอร์สำหรับแต่ละการฝึกสอน
+│   ├── visualization/
+│   │   ├── best_trading_results.png    # กราฟแสดงผลการเทรด
+│   │   ├── trading_data.json          # ข้อมูลการเทรด
+│   │   └── training_summary.png       # กราฟสรุปผลการฝึกสอน
+│   ├── checkpoints/                    # โฟลเดอร์เก็บ checkpoint
+│   │   ├── model_episode_{n}.keras    # โมเดลแต่ละ episode
+│   │   ├── history_episode_{n}.json   # ประวัติการฝึกสอน
+│   │   └── state_episode_{n}.json     # สถานะการฝึกสอน
+│   ├── best_model.h5                  # โมเดลที่ดีที่สุด
+│   └── final_model.h5                 # โมเดลสุดท้าย
+```
+
+### 3. การกำหนดตำแหน่งไฟล์ผลลัพธ์
+```python
+# ตัวอย่างการกำหนดตำแหน่งไฟล์ผลลัพธ์
+output_dir = 'outputs'  # โฟลเดอร์หลักสำหรับเก็บผลลัพธ์
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+run_name = f"{symbol}_{timeframe}_{timestamp}"
+run_dir = os.path.join(output_dir, run_name)
+```
+
+### 4. กราฟสรุปผลการฝึกสอน
+```python
+def plot_training_summary(history, run_dir):
+    # สร้างกราฟสรุปผล
+    fig = plt.figure(figsize=(20, 15))
+    
+    # กราฟ Training Rewards
+    plt.subplot(2, 2, 1)
+    plt.plot(history['train_rewards'], label='Training Rewards')
+    plt.title('Training Rewards')
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.grid(True)
+    
+    # กราฟ Training Profits
+    plt.subplot(2, 2, 2)
+    plt.plot(history['train_profits'], label='Training Profits')
+    plt.title('Training Profits')
+    plt.xlabel('Episode')
+    plt.ylabel('Profit')
+    plt.grid(True)
+    
+    # กราฟ Validation Results
+    plt.subplot(2, 2, 3)
+    plt.plot(history['val_rewards'], label='Validation Rewards')
+    plt.plot(history['val_profits'], label='Validation Profits')
+    plt.title('Validation Results')
+    plt.xlabel('Episode')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.grid(True)
+    
+    # กราฟ Exploration Rate
+    plt.subplot(2, 2, 4)
+    plt.plot(history['exploration_rates'], label='Exploration Rate')
+    plt.title('Exploration Rate (Epsilon)')
+    plt.xlabel('Episode')
+    plt.ylabel('Epsilon')
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(run_dir, 'training_summary.png'))
+    plt.close()
+```
+
+### 5. การปรับแต่งการแสดงผล
+```python
+# ตัวอย่างการปรับแต่งการแสดงผล
+plt.style.use('seaborn')      # ใช้สไตล์ seaborn
+plt.rcParams['figure.figsize'] = (15, 10)  # ตั้งค่าขนาดกราฟ
+plt.rcParams['font.size'] = 12  # ตั้งค่าขนาดตัวอักษร
+```
+
+### 6. ข้อควรระวังในการแสดงผล
+1. ตรวจสอบพื้นที่จัดเก็บไฟล์กราฟ
+2. ระวังการใช้หน่วยความจำมากเกินไป
+3. ปิดกราฟหลังจากบันทึก
+4. ตรวจสอบการแสดงผลที่ถูกต้อง
+5. บันทึกกราฟในรูปแบบที่เหมาะสม 
+
+## หมายเหตุเกี่ยวกับ Directory
+- โฟลเดอร์ `outputs/` เป็นโฟลเดอร์หลักที่ใช้เก็บผลลัพธ์การฝึกสอนทั้งหมด
+- โฟลเดอร์ `models/` ไม่ได้ถูกใช้งานในการฝึกสอน (สามารถลบได้)
+- โมเดลทั้งหมดจะถูกเก็บในโฟลเดอร์ `outputs/{symbol}_{timeframe}_{timestamp}/`
+
+### 2. โครงสร้างไฟล์ผลลัพธ์
+```
+outputs/
+├── {symbol}_{timeframe}_{timestamp}/    # โฟลเดอร์สำหรับแต่ละการฝึกสอน
+│   ├── visualization/
+│   │   ├── best_trading_results.png    # กราฟแสดงผลการเทรด
+│   │   ├── trading_data.json          # ข้อมูลการเทรด
+│   │   └── training_summary.png       # กราฟสรุปผลการฝึกสอน
+│   ├── checkpoints/                    # โฟลเดอร์เก็บ checkpoint
+│   │   ├── model_episode_{n}.keras    # โมเดลแต่ละ episode
+│   │   ├── history_episode_{n}.json   # ประวัติการฝึกสอน
+│   │   └── state_episode_{n}.json     # สถานะการฝึกสอน
+│   ├── best_model.h5                  # โมเดลที่ดีที่สุด
+│   └── final_model.h5                 # โมเดลสุดท้าย
+```
+
+### 3. การกำหนดตำแหน่งไฟล์ผลลัพธ์
+```python
+# ตัวอย่างการกำหนดตำแหน่งไฟล์ผลลัพธ์
+output_dir = 'outputs'  # โฟลเดอร์หลักสำหรับเก็บผลลัพธ์
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+run_name = f"{symbol}_{timeframe}_{timestamp}"
+run_dir = os.path.join(output_dir, run_name)
+```
+
+### 4. กราฟสรุปผลการฝึกสอน
+```python
+def plot_training_summary(history, run_dir):
+    # สร้างกราฟสรุปผล
+    fig = plt.figure(figsize=(20, 15))
+    
+    # กราฟ Training Rewards
+    plt.subplot(2, 2, 1)
+    plt.plot(history['train_rewards'], label='Training Rewards')
+    plt.title('Training Rewards')
+    plt.xlabel('Episode')
+    plt.ylabel('Reward')
+    plt.grid(True)
+    
+    # กราฟ Training Profits
+    plt.subplot(2, 2, 2)
+    plt.plot(history['train_profits'], label='Training Profits')
+    plt.title('Training Profits')
+    plt.xlabel('Episode')
+    plt.ylabel('Profit')
+    plt.grid(True)
+    
+    # กราฟ Validation Results
+    plt.subplot(2, 2, 3)
+    plt.plot(history['val_rewards'], label='Validation Rewards')
+    plt.plot(history['val_profits'], label='Validation Profits')
+    plt.title('Validation Results')
+    plt.xlabel('Episode')
+    plt.ylabel('Value')
+    plt.legend()
+    plt.grid(True)
+    
+    # กราฟ Exploration Rate
+    plt.subplot(2, 2, 4)
+    plt.plot(history['exploration_rates'], label='Exploration Rate')
+    plt.title('Exploration Rate (Epsilon)')
+    plt.xlabel('Episode')
+    plt.ylabel('Epsilon')
+    plt.grid(True)
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join(run_dir, 'training_summary.png'))
+    plt.close()
+```
+
+### 5. การปรับแต่งการแสดงผล
+```python
+# ตัวอย่างการปรับแต่งการแสดงผล
+plt.style.use('seaborn')      # ใช้สไตล์ seaborn
+plt.rcParams['figure.figsize'] = (15, 10)  # ตั้งค่าขนาดกราฟ
+plt.rcParams['font.size'] = 12  # ตั้งค่าขนาดตัวอักษร
+```
+
+### 6. ข้อควรระวังในการแสดงผล
+1. ตรวจสอบพื้นที่จัดเก็บไฟล์กราฟ
+2. ระวังการใช้หน่วยความจำมากเกินไป
+3. ปิดกราฟหลังจากบันทึก
+4. ตรวจสอบการแสดงผลที่ถูกต้อง
+5. บันทึกกราฟในรูปแบบที่เหมาะสม 

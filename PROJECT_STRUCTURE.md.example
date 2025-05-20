@@ -1,0 +1,132 @@
+# โครงสร้างโปรเจค Crypto RL Trading Bot
+
+```
+crypto-rl-trading/
+│
+├── config/
+│   ├── __init__.py
+│   ├── config.py                  # ไฟล์ตั้งค่าหลักของระบบ
+│   └── credentials.py             # ไฟล์เก็บ API key (ไม่ควร push ขึ้น git)
+│
+├── data/
+│   ├── __init__.py
+│   ├── data_collector.py          # เก็บข้อมูลราคาและปริมาณการซื้อขายจาก exchange
+│   ├── data_processor.py          # แปลงข้อมูลดิบให้เป็นรูปแบบที่ใช้ได้กับ RL agent
+│   ├── feature_engineering.py     # สร้าง features และ indicators ต่างๆ
+│   └── datasets/                  # โฟลเดอร์เก็บชุดข้อมูลที่รวบรวมได้
+│       ├── BTCUSDT_1h_2023.csv    # ข้อมูลราคารายชั่วโมงย้อนหลัง
+│       └── features/              # ข้อมูล features ที่สร้างขึ้น
+│
+├── environment/
+│   ├── __init__.py
+│   ├── trading_env.py             # สภาพแวดล้อมสำหรับการเทรด (OpenAI Gym)
+│   ├── reward_functions.py        # ฟังก์ชันสำหรับคำนวณรางวัล
+│   └── action_space.py            # กำหนดช่วงของการกระทำที่เป็นไปได้
+│
+├── agents/
+│   ├── __init__.py
+│   ├── base_agent.py              # คลาสพื้นฐานสำหรับ agent ทุกประเภท
+│   ├── dqn_agent.py               # Deep Q-Network agent
+│   ├── ppo_agent.py               # Proximal Policy Optimization agent
+│   ├── sac_agent.py               # Soft Actor-Critic agent
+│   └── td3_agent.py               # Twin Delayed DDPG agent
+│
+├── models/
+│   ├── __init__.py
+│   ├── dqn_model.py               # โมเดล neural network สำหรับ DQN
+│   ├── actor_critic_model.py      # โมเดล actor-critic สำหรับ PPO, SAC, TD3
+│   └── saved_models/              # โฟลเดอร์สำหรับเก็บโมเดลที่ train แล้ว
+│       ├── ppo_btcusdt_1h/        # โมเดล PPO สำหรับ BTCUSDT รายชั่วโมง
+│       └── dqn_btcusdt_1h/        # โมเดล DQN สำหรับ BTCUSDT รายชั่วโมง
+│
+├── utils/
+│   ├── __init__.py
+│   ├── logger.py                  # ระบบบันทึกประวัติการทำงาน
+│   ├── metrics.py                 # คำนวณเมตริกต่างๆ เช่น Sharpe ratio, Max Drawdown
+│   ├── visualizer.py              # แสดงผลลัพธ์ในรูปแบบกราฟและตาราง
+│   └── binance_api.py             # ฟังก์ชันสำหรับเชื่อมต่อกับ Binance API
+│
+├── backtesting/
+│   ├── __init__.py
+│   ├── backtest_engine.py         # ระบบทดสอบย้อนหลัง
+│   └── strategy_evaluator.py      # วิเคราะห์ผลการทดสอบย้อนหลัง
+│
+├── live_trading/
+│   ├── __init__.py
+│   ├── trader.py                  # ระบบซื้อขายเรียลไทม์
+│   ├── risk_manager.py            # จัดการความเสี่ยง
+│   └── order_manager.py           # จัดการคำสั่งซื้อขาย
+│
+├── scripts/
+│   ├── collect_data.py            # สคริปต์สำหรับเก็บรวบรวมข้อมูล
+│   ├── train_agent.py             # สคริปต์สำหรับฝึกสอน agent
+│   ├── backtest_agent.py          # สคริปต์สำหรับทดสอบย้อนหลัง
+│   ├── paper_trading.py           # สคริปต์สำหรับทดลองเทรดด้วยเงินจำลอง
+│   └── live_trading.py            # สคริปต์สำหรับเทรดด้วยเงินจริง
+│
+├── notebooks/
+│   ├── exploratory_data_analysis.ipynb  # วิเคราะห์ข้อมูลเบื้องต้น
+│   ├── feature_importance.ipynb        # วิเคราะห์ความสำคัญของ features
+│   ├── hyperparameter_tuning.ipynb     # หาค่าพารามิเตอร์ที่เหมาะสม
+│   └── performance_analysis.ipynb      # วิเคราะห์ประสิทธิภาพของระบบ
+│
+├── logs/                           # โฟลเดอร์สำหรับเก็บ logs
+│   ├── training/                   # logs การฝึกสอน
+│   ├── backtest/                   # logs การทดสอบย้อนหลัง
+│   └── trading/                    # logs การเทรด
+│
+├── requirements.txt                # ไฟล์รายชื่อแพคเกจที่ต้องใช้
+├── setup.py                        # ไฟล์สำหรับติดตั้งโปรเจคเป็นแพคเกจ
+└── README.md                       # ไฟล์คำอธิบายโปรเจค
+```
+
+## คำอธิบายโครงสร้าง
+
+### 1. config/
+- เก็บไฟล์การตั้งค่าต่างๆ ของระบบ
+- แยก API keys ไว้ใน credentials.py (ไม่ควร push ขึ้น git)
+
+### 2. data/
+- จัดการข้อมูลทั้งหมดของระบบ
+- แยกการเก็บข้อมูลและการประมวลผลออกจากกัน
+- เก็บชุดข้อมูลที่รวบรวมได้ใน datasets/
+
+### 3. environment/
+- สร้างสภาพแวดล้อมสำหรับการเทรด
+- ใช้ OpenAI Gym เป็นพื้นฐาน
+- แยกฟังก์ชันรางวัลและ action space ออกมา
+
+### 4. agents/
+- เก็บ agent ต่างๆ ที่ใช้ในการเทรด
+- มี base_agent.py เป็นคลาสพื้นฐาน
+- รองรับหลายอัลกอริทึม (DQN, PPO, SAC, TD3)
+
+### 5. models/
+- เก็บโมเดล neural network
+- แยกโมเดลตามประเภท (DQN, Actor-Critic)
+- เก็บโมเดลที่ train แล้วใน saved_models/
+
+### 6. utils/
+- ฟังก์ชันช่วยเหลือต่างๆ
+- ระบบ logging, metrics, visualization
+- การเชื่อมต่อกับ Binance API
+
+### 7. backtesting/
+- ระบบทดสอบย้อนหลัง
+- วิเคราะห์ผลการทดสอบ
+
+### 8. live_trading/
+- ระบบเทรดจริง
+- จัดการความเสี่ยงและคำสั่งซื้อขาย
+
+### 9. scripts/
+- สคริปต์สำหรับใช้งานระบบ
+- แยกตามการใช้งาน (collect, train, backtest, trade)
+
+### 10. notebooks/
+- Jupyter notebooks สำหรับการวิเคราะห์
+- แยกตามวัตถุประสงค์
+
+### 11. logs/
+- เก็บ logs ต่างๆ
+- แยกตามประเภท (training, backtest, trading) 

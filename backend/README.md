@@ -85,7 +85,7 @@ RL_CONFIG = {
     'train_episodes': 10000,      # จำนวน episodes ในการฝึกสอน
     'eval_frequency': 10,         # ความถี่ในการประเมินผลระหว่างฝึกสอน (ทุก n episodes)
     'model_save_frequency': 100,  # ความถี่ในการบันทึกโมเดล (ทุก n episodes)
-    'model_dir': os.path.join(BASE_DIR, 'models', 'saved_models'),  # ที่เก็บโมเดล
+    'output_dir': os.path.join(BASE_DIR, 'outputs'),  # ที่เก็บผลลัพธ์การฝึกสอน
 }
 
 # การตั้งค่าสำหรับสภาพแวดล้อมการซื้อขาย
@@ -185,9 +185,7 @@ crypto-trading-bot/
 ├── live_trading.py         # สคริปต์สำหรับการเทรดแบบเรียลไทม์
 ├── live_trading_logs/      # ล็อกการเทรดแบบเรียลไทม์
 ├── main.py                 # จุดเริ่มต้นของโปรแกรม
-├── models/                 # โมดูลตัวแทน AI
-│   └── dqn_agent.py       # ตัวแทน Deep Q-Network
-├── outputs/                # ผลลัพธ์การฝึกสอน
+├── outputs/                # ผลลัพธ์การฝึกสอนและโมเดล
 ├── README.md               # เอกสารนี้
 ├── requirements.txt        # แพคเกจที่จำเป็น
 ├── train.py                # สคริปต์สำหรับการฝึกสอน
