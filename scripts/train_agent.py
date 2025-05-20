@@ -14,6 +14,7 @@ import json
 from typing import Tuple
 import tensorflow as tf
 import logging
+from tqdm import tqdm
 
 # ตั้งค่า TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # ปิด warning และ info messages
@@ -707,7 +708,13 @@ def train_dqn_agent(
                 logger.info("เริ่มฝึกสอนใหม่ตั้งแต่รอบแรก")
                 current_episode = 0
         
-        for episode in range(current_episode, episodes):
+        # สร้าง progress bar
+        pbar = tqdm(range(current_episode, episodes), 
+                   desc="Training Progress",
+                   unit="episode",
+                   ncols=100)
+        
+        for episode in pbar:
             try:
                 current_episode = episode
                 
@@ -777,7 +784,13 @@ def train_dqn_agent(
                         with open(eval_history_path, 'w') as f:
                             json.dump(current_eval_results, f)
                     
-                    log_progress(episode, episodes, info, val_result, best_val_profit, agent.exploration_rate)
+                    # อัพเดท progress bar
+                    pbar.set_postfix({
+                        'train_profit': f"{info['total_profit']:.2f}",
+                        'val_profit': f"{val_result['profit']:.2f}",
+                        'best_val': f"{best_val_profit:.2f}",
+                        'epsilon': f"{agent.exploration_rate:.2f}"
+                    })
                     
                     # บันทึกสถานะทุกๆ 10 รอบ
                     if episode % 10 == 0:
@@ -800,6 +813,9 @@ def train_dqn_agent(
                 })
                 # ดำเนินการต่อในรอบถัดไป
                 continue
+        
+        # ปิด progress bar
+        pbar.close()
         
         # 10. บันทึกผลลัพธ์สุดท้าย
         save_training_results(agent, run_dir, history={
@@ -880,10 +896,12 @@ def validate_episode(env, agent, state_size: int) -> dict:
 
 def save_validation_plot(env, run_dir: str):
     """บันทึกกราฟการเทรดที่ดีที่สุด"""
+    plt.ioff()  # ปิดการแสดงผลแบบ interactive
     plt.figure(figsize=(15, 10))
-    env.render(mode='human')
+    env.render(mode='rgb_array')  # ใช้ rgb_array แทน human
     plt.savefig(os.path.join(run_dir, 'best_validation_trades.png'))
     plt.close()
+    plt.ion()  # เปิดการแสดงผลแบบ interactive กลับคืน
 
 def log_progress(episode: int, total_episodes: int, train_info: dict, 
                 val_result: dict, best_val_profit: float, exploration_rate: float):
@@ -929,7 +947,7 @@ def save_training_results(agent, run_dir: str, history: dict):
         
         # สร้างกราฟแสดงประวัติการฝึกสอน
         fig = plt.figure(figsize=(20, 15))
-        fig.suptitle('ผลการฝึกสอน DQN Agent', fontsize=16, y=0.95)
+        fig.suptitle('DQN Agent Training Results', fontsize=16, y=0.95)
         
         # กราฟ Training Rewards
         ax1 = plt.subplot(2, 2, 1)
@@ -1063,7 +1081,7 @@ def format_metric(current: float, previous: float, name: str) -> str:
     SAME = '→'
     
     # คำนวณการเปลี่ยนแปลง
-    if previous is None:
+    if previous is None or np.isnan(previous):
         change = 0
     else:
         change = ((current - previous) / abs(previous)) * 100 if previous != 0 else 0
@@ -1095,16 +1113,16 @@ def log_evaluation_results(results: dict, previous_results: dict = None):
         results: ผลการวัดปัจจุบัน
         previous_results: ผลการวัดก่อนหน้า (ถ้ามี)
     """
-    logger.info("\n=== ผลการวัดโมเดล ===")
+    logger.info("\n=== Model Evaluation Results ===")
     
     # แสดงผลแต่ละ metric
     metrics = [
-        ('avg_total_profit', 'กำไรรวม'),
-        ('avg_win_rate', 'อัตราการชนะ'),
-        ('avg_profit_per_trade', 'กำไรต่อการเทรด'),
-        ('avg_max_drawdown', 'Drawdown สูงสุด'),
+        ('avg_total_profit', 'Total Profit'),
+        ('avg_win_rate', 'Win Rate'),
+        ('avg_profit_per_trade', 'Profit per Trade'),
+        ('avg_max_drawdown', 'Max Drawdown'),
         ('avg_sharpe_ratio', 'Sharpe Ratio'),
-        ('avg_trades_per_episode', 'จำนวนการเทรดต่อรอบ')
+        ('avg_trades_per_episode', 'Trades per Episode')
     ]
     
     for metric, name in metrics:
@@ -1119,7 +1137,7 @@ def log_evaluation_results(results: dict, previous_results: dict = None):
         total_metrics = len(metrics)
         improvement_rate = (improvements / total_metrics) * 100
         
-        logger.info(f"\nภาพรวม: {improvements}/{total_metrics} metrics ดีขึ้น ({improvement_rate:.1f}%)")
+        logger.info(f"\nOverall: {improvements}/{total_metrics} metrics improved ({improvement_rate:.1f}%)")
 
 def evaluate_model(env, agent, state_size: int, episodes: int = 10) -> dict:
     """
@@ -1173,18 +1191,18 @@ def evaluate_model(env, agent, state_size: int, episodes: int = 10) -> dict:
             # คำนวณ Sharpe Ratio
             if len(episode_profits) > 1:
                 returns = np.diff(episode_profits)
-                if len(returns) > 0:
-                    sharpe = np.mean(returns) / (np.std(returns) + 1e-6) * np.sqrt(252)  # Annualized
+                if len(returns) > 0 and np.std(returns) > 0:
+                    sharpe = np.mean(returns) / np.std(returns) * np.sqrt(252)  # Annualized
                     metrics['sharpe_ratio'].append(sharpe)
     
-    # คำนวณค่าเฉลี่ยของ metrics
+    # คำนวณค่าเฉลี่ยของ metrics พร้อมป้องกัน NaN
     results = {
-        'avg_total_profit': np.mean(metrics['total_profits']),
-        'avg_win_rate': np.mean(metrics['win_rate']),
-        'avg_profit_per_trade': np.mean(metrics['avg_profit_per_trade']),
-        'avg_max_drawdown': np.mean(metrics['max_drawdown']),
-        'avg_sharpe_ratio': np.mean(metrics['sharpe_ratio']),
-        'avg_trades_per_episode': np.mean(metrics['total_trades'])
+        'avg_total_profit': np.mean(metrics['total_profits']) if metrics['total_profits'] else 0.0,
+        'avg_win_rate': np.mean(metrics['win_rate']) if metrics['win_rate'] else 0.0,
+        'avg_profit_per_trade': np.mean(metrics['avg_profit_per_trade']) if metrics['avg_profit_per_trade'] else 0.0,
+        'avg_max_drawdown': np.mean(metrics['max_drawdown']) if metrics['max_drawdown'] else 0.0,
+        'avg_sharpe_ratio': np.mean(metrics['sharpe_ratio']) if metrics['sharpe_ratio'] else 0.0,
+        'avg_trades_per_episode': np.mean(metrics['total_trades']) if metrics['total_trades'] else 0.0
     }
     
     return results
