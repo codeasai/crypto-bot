@@ -1,0 +1,6 @@
+gym
+ta
+ccxt
+python-dotenv
+scikit-learn
+tqdm 

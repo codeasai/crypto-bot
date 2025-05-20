@@ -94,8 +94,8 @@ class DQNAgent:
         self.memory = deque(maxlen=memory_size)
         
         # สร้างโมเดลหลักและโมเดลเป้าหมาย
-        self.model = self._build_model()
-        self.target_model = self._build_model()
+        self.model = self.build_model()
+        self.target_model = self.build_model()
         self.update_target_model()
         
         # ตัวแปรเพิ่มเติมสำหรับการติดตาม
@@ -109,42 +109,49 @@ class DQNAgent:
             'exploration_rate': []
         }
         
-    def _build_model(self) -> keras.Model:
+    def build_model(self):
         """
-        สร้างโครงข่ายประสาทเทียมสำหรับ DQN
-        
-        Returns:
-            keras.Model: โมเดล Keras ที่สร้างขึ้น
+        สร้างโมเดล DQN
         """
         try:
-            # สร้าง input layer
-            inputs = keras.Input(shape=(self.state_size,))
-            
-            # ชั้นซ่อน
-            x = layers.Dense(128, activation='relu', kernel_initializer='he_normal')(inputs)
-            x = layers.BatchNormalization()(x)
-            x = layers.Dropout(0.2)(x)
-            
-            x = layers.Dense(128, activation='relu', kernel_initializer='he_normal')(x)
-            x = layers.BatchNormalization()(x)
-            x = layers.Dropout(0.2)(x)
-            
-            x = layers.Dense(128, activation='relu', kernel_initializer='he_normal')(x)
-            x = layers.BatchNormalization()(x)
-            
-            # ชั้นข้อมูลออก
-            outputs = layers.Dense(self.action_size, activation='linear')(x)
-            
-            # สร้างโมเดล
-            model = keras.Model(inputs=inputs, outputs=outputs)
-            
-            # คอมไพล์โมเดล
-            model.compile(
-                loss='mse',
-                optimizer=optimizers.Adam(learning_rate=self.learning_rate),
-                metrics=['mae'],
-                jit_compile=True  # เปิดใช้งาน XLA compilation
-            )
+            # ตรวจสอบ GPU
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                # ตั้งค่า mixed precision
+                tf.keras.mixed_precision.set_global_policy('mixed_float16')
+                
+                # สร้างโมเดลบน GPU
+                with tf.device('/GPU:0'):
+                    model = tf.keras.Sequential([
+                        tf.keras.layers.Dense(128, activation='relu', input_shape=(self.state_size,)),
+                        tf.keras.layers.Dropout(0.2),
+                        tf.keras.layers.Dense(64, activation='relu'),
+                        tf.keras.layers.Dropout(0.2),
+                        tf.keras.layers.Dense(self.action_size, activation='linear')
+                    ])
+                    
+                    # คอมไพล์โมเดล
+                    model.compile(
+                        optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate),
+                        loss='mse',
+                        metrics=['mae']
+                    )
+            else:
+                # สร้างโมเดลบน CPU
+                model = tf.keras.Sequential([
+                    tf.keras.layers.Dense(128, activation='relu', input_shape=(self.state_size,)),
+                    tf.keras.layers.Dropout(0.2),
+                    tf.keras.layers.Dense(64, activation='relu'),
+                    tf.keras.layers.Dropout(0.2),
+                    tf.keras.layers.Dense(self.action_size, activation='linear')
+                ])
+                
+                # คอมไพล์โมเดล
+                model.compile(
+                    optimizer=tf.keras.optimizers.Adam(learning_rate=self.learning_rate),
+                    loss='mse',
+                    metrics=['mae']
+                )
             
             return model
             
@@ -208,63 +215,63 @@ class DQNAgent:
     
     def replay(self) -> float:
         """
-        ฝึกสอนโมเดลด้วย experience replay
-        
-        Returns:
-            float: ค่าความสูญเสีย (loss) จากการฝึกสอน
+        ฝึกสอนโมเดลด้วยข้อมูลใน memory
         """
         try:
             if len(self.memory) < self.batch_size:
                 return 0
             
-            # สุ่มตัวอย่างประสบการณ์จากหน่วยความจำ
+            # สุ่มตัวอย่างข้อมูล
             minibatch = random.sample(self.memory, self.batch_size)
             
-            # แยกข้อมูลและเตรียมสำหรับการฝึกสอน
-            states = np.array([experience[0] for experience in minibatch], dtype=np.float32)
-            actions = np.array([experience[1] for experience in minibatch], dtype=np.int32)
-            rewards = np.array([experience[2] for experience in minibatch], dtype=np.float32)
-            next_states = np.array([experience[3] for experience in minibatch], dtype=np.float32)
-            dones = np.array([experience[4] for experience in minibatch], dtype=np.float32)
+            # แยกข้อมูล
+            states = np.array([i[0] for i in minibatch])
+            actions = np.array([i[1] for i in minibatch])
+            rewards = np.array([i[2] for i in minibatch])
+            next_states = np.array([i[3] for i in minibatch])
+            dones = np.array([i[4] for i in minibatch])
             
-            # ใช้โมเดลเป้าหมายในการคำนวณ Q values ของสถานะถัดไป
+            # คำนวณ target Q-values
             target_q_values = self.target_model.predict(next_states, verbose=0)
-            max_target_q_values = np.max(target_q_values, axis=1)
+            target_q_values = np.max(target_q_values, axis=1)
+            target_q_values = rewards + (1 - dones) * self.discount_factor * target_q_values
             
-            # คำนวณ target Q values
-            targets = rewards + (1 - dones) * self.discount_factor * max_target_q_values
-            
-            # ใช้โมเดลหลักในการทำนาย Q values ของสถานะปัจจุบัน
+            # คำนวณ current Q-values
             current_q_values = self.model.predict(states, verbose=0)
             
-            # อัพเดท Q values เฉพาะการกระทำที่เลือก
-            for i in range(self.batch_size):
-                current_q_values[i, actions[i]] = targets[i]
+            # อัพเดท Q-values
+            for i, action in enumerate(actions):
+                current_q_values[i][action] = target_q_values[i]
             
             # ฝึกสอนโมเดล
-            history = self.model.fit(states, current_q_values, epochs=1, verbose=0)
-            loss = history.history['loss'][0]
-            mae = history.history['mae'][0]
+            history = self.model.fit(
+                states, 
+                current_q_values, 
+                batch_size=self.batch_size, 
+                epochs=1, 
+                verbose=0
+            )
+            
+            # อัพเดท target model
+            if self.train_step_counter % self.update_target_every == 0:
+                self.update_target_model()
             
             # บันทึกประวัติการฝึกสอน
-            self.training_history['loss'].append(loss)
-            self.training_history['mae'].append(mae)
+            self.training_history['loss'].append(history.history['loss'][0])
+            self.training_history['mae'].append(history.history['mae'][0])
             self.training_history['exploration_rate'].append(self.exploration_rate)
             
             # อัพเดทอัตราการสำรวจ
             if self.exploration_rate > self.exploration_min:
                 self.exploration_rate *= self.exploration_decay
             
-            # ตรวจสอบว่าควรอัพเดทโมเดลเป้าหมายหรือไม่
             self.train_step_counter += 1
-            if self.train_step_counter % self.update_target_every == 0:
-                self.update_target_model()
-                
-            return loss
+            
+            return history.history['loss'][0]
             
         except Exception as e:
-            logger.error(f"เกิดข้อผิดพลาดในการฝึกสอน: {str(e)}")
-            return 0.0
+            logger.error(f"เกิดข้อผิดพลาดในการ replay: {str(e)}")
+            return 0
     
     def save(self, filepath: str):
         """

@@ -43,31 +43,69 @@ def setup_tensorflow():
     ตั้งค่า TensorFlow และ GPU
     """
     try:
-        # บังคับให้ใช้ CPU
-        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-        logger.info("บังคับให้ใช้ CPU")
+        # ตั้งค่า logging ก่อน
+        tf.get_logger().setLevel('ERROR')
+        os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
         
-        # ตั้งค่า memory growth
+        # ตั้งค่า CUDA paths
+        os.environ['CUDA_PATH'] = 'C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v11.8'
+        os.environ['PATH'] = os.environ['CUDA_PATH'] + '/bin;' + os.environ['PATH']
+        
+        # ตรวจสอบ CUDA
+        if not tf.test.is_built_with_cuda():
+            logger.warning("TensorFlow ไม่ได้ build ด้วย CUDA")
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+            return
+            
+        # ตรวจสอบ GPU
         gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
+        if not gpus:
+            logger.warning("ไม่พบ GPU")
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+            return
+            
+        logger.info(f"พบ GPU: {len(gpus)} เครื่อง")
+        for gpu in gpus:
+            logger.info(f"ชื่อ GPU: {gpu.name}")
+            
+        # ตั้งค่า memory growth
+        try:
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
-            logger.info(f"พบ GPU: {len(gpus)} เครื่อง")
-            for gpu in gpus:
-                logger.info(f"ชื่อ GPU: {gpu.name}")
+                logger.info(f"ตั้งค่า memory growth สำหรับ {gpu.name} สำเร็จ")
+        except RuntimeError as e:
+            logger.warning(f"ไม่สามารถตั้งค่า memory growth: {str(e)}")
             
-            # ตั้งค่า mixed precision
+        # ตั้งค่า mixed precision
+        try:
             tf.keras.mixed_precision.set_global_policy('mixed_float16')
             logger.info("เปิดใช้งาน mixed precision")
-        else:
-            logger.info("ไม่พบ GPU จะใช้ CPU แทน")
+        except Exception as e:
+            logger.warning(f"ไม่สามารถเปิดใช้งาน mixed precision: {str(e)}")
             
         # ตั้งค่า XLA
-        tf.config.optimizer.set_jit(True)
-        logger.info("เปิดใช้งาน XLA JIT compilation")
-        
+        try:
+            tf.config.optimizer.set_jit(True)
+            logger.info("เปิดใช้งาน XLA JIT compilation")
+        except Exception as e:
+            logger.warning(f"ไม่สามารถเปิดใช้งาน XLA: {str(e)}")
+            
+        # ตรวจสอบว่า GPU สามารถใช้งานได้จริง
+        try:
+            with tf.device('/GPU:0'):
+                a = tf.random.normal([1000, 1000])
+                b = tf.random.normal([1000, 1000])
+                c = tf.matmul(a, b)
+                logger.info("ทดสอบ GPU สำเร็จ")
+        except Exception as e:
+            logger.error(f"ไม่สามารถใช้งาน GPU ได้: {str(e)}")
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+            logger.warning("บังคับให้ใช้ CPU เนื่องจากไม่สามารถใช้งาน GPU ได้")
+            
     except Exception as e:
         logger.error(f"เกิดข้อผิดพลาดในการตั้งค่า TensorFlow: {str(e)}")
+        os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+        logger.warning("บังคับให้ใช้ CPU เนื่องจากเกิดข้อผิดพลาดในการตั้งค่า GPU")
 
 def signal_handler(signum, frame):
     """
@@ -96,10 +134,22 @@ def save_training_state(agent, run_dir: str, episode: int, history: dict):
         state_dir = os.path.join(run_dir, 'checkpoints')
         os.makedirs(state_dir, exist_ok=True)
         
-        # ตรวจสอบความยาวของ arrays
-        for key in ['train_rewards', 'val_rewards', 'train_profits', 'val_profits', 'exploration_rates']:
-            if key in history and not isinstance(history[key], list):
-                history[key] = list(history[key])
+        # ตรวจสอบและแปลง arrays ให้มีความยาวเท่ากัน
+        arrays = ['train_rewards', 'val_rewards', 'train_profits', 'val_profits', 'exploration_rates']
+        min_length = float('inf')
+        
+        # หาความยาวต่ำสุดของ arrays
+        for key in arrays:
+            if key in history:
+                if not isinstance(history[key], list):
+                    history[key] = list(history[key])
+                min_length = min(min_length, len(history[key]))
+        
+        # ตัด arrays ให้มีความยาวเท่ากัน
+        if min_length != float('inf'):
+            for key in arrays:
+                if key in history:
+                    history[key] = history[key][:min_length]
         
         # บันทึกโมเดล
         model_path = os.path.join(state_dir, f'model_episode_{episode}.keras')
@@ -401,6 +451,48 @@ def load_checkpoint(agent: DQNAgent, model_path: str, history: dict) -> dict:
         logger.error(f"เกิดข้อผิดพลาดในการโหลด checkpoint: {str(e)}")
         return {}
 
+def check_gpu_availability() -> bool:
+    """
+    ตรวจสอบความพร้อมของ GPU และขอการยืนยันจากผู้ใช้
+    
+    Returns:
+        bool: True ถ้าผู้ใช้ยืนยันให้ใช้ GPU, False ถ้าผู้ใช้เลือกใช้ CPU หรือยกเลิก
+    """
+    try:
+        # ตรวจสอบ CUDA
+        if not tf.test.is_built_with_cuda():
+            logger.warning("TensorFlow ไม่ได้ build ด้วย CUDA")
+            return False
+            
+        # ตรวจสอบ GPU
+        gpus = tf.config.list_physical_devices('GPU')
+        if not gpus:
+            logger.warning("ไม่พบ GPU")
+            return False
+            
+        # แสดงข้อมูล GPU
+        logger.info("\n=== ข้อมูล GPU ที่พบ ===")
+        for i, gpu in enumerate(gpus):
+            logger.info(f"GPU {i}: {gpu.name}")
+            
+        # ขอการยืนยันจากผู้ใช้
+        while True:
+            choice = input("\nต้องการใช้ GPU ในการ train หรือไม่? (Y/n/q): ").lower()
+            if choice in ['', 'y', 'yes']:
+                return True
+            elif choice in ['n', 'no']:
+                logger.info("จะใช้ CPU แทน")
+                return False
+            elif choice in ['q', 'quit']:
+                logger.info("ยกเลิกการ train")
+                sys.exit(0)
+            else:
+                print("กรุณากด Enter สำหรับ Yes, 'n' สำหรับ No, หรือ 'q' สำหรับยกเลิก")
+                
+    except Exception as e:
+        logger.error(f"เกิดข้อผิดพลาดในการตรวจสอบ GPU: {str(e)}")
+        return False
+
 def train_dqn_agent(
     symbol: str,
     timeframe: str,
@@ -418,6 +510,14 @@ def train_dqn_agent(
     global training_cancelled, current_episode, current_run_dir
     
     try:
+        # ตรวจสอบ GPU และขอการยืนยัน
+        use_gpu = check_gpu_availability()
+        if not use_gpu:
+            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+            logger.info("กำลังใช้ CPU ในการ train")
+        else:
+            logger.info("กำลังใช้ GPU ในการ train")
+            
         # ตั้งค่า TensorFlow
         setup_tensorflow()
         
@@ -532,7 +632,14 @@ def train_dqn_agent(
         )
         
         # 8. สร้างตัวแทน DQN
-        state_size = env.observation_space.shape[0]
+        # คำนวณ state_size จากจำนวนคอลัมน์ที่ใช้ (ไม่รวม timestamp และ date)
+        feature_columns = [col for col in processed_data.columns if col not in ['timestamp', 'date']]
+        state_size = len(feature_columns) * window_size + 2  # +2 สำหรับ balance และ position
+        
+        logger.info(f"จำนวน features: {len(feature_columns)}")
+        logger.info(f"window_size: {window_size}")
+        logger.info(f"state_size: {state_size}")
+        
         discrete_action_size = 7  # 7 ประเภทการกระทำ
         
         agent = DQNAgent(
@@ -651,6 +758,24 @@ def train_dqn_agent(
                         best_val_profit = val_result['profit']
                         agent.save(os.path.join(run_dir, 'best_model.h5'))
                         save_validation_plot(val_env, run_dir)
+                        
+                        # วัดผลโมเดลที่ดีที่สุด
+                        logger.info("\n=== วัดผลโมเดลที่ดีที่สุด ===")
+                        current_eval_results = evaluate_model(val_env, agent, state_size)
+                        
+                        # บันทึกผลการวัดก่อนหน้า
+                        eval_history_path = os.path.join(run_dir, 'evaluation_history.json')
+                        previous_eval_results = None
+                        if os.path.exists(eval_history_path):
+                            with open(eval_history_path, 'r') as f:
+                                previous_eval_results = json.load(f)
+                        
+                        # แสดงผลการวัดพร้อมเปรียบเทียบ
+                        log_evaluation_results(current_eval_results, previous_eval_results)
+                        
+                        # บันทึกผลการวัดปัจจุบัน
+                        with open(eval_history_path, 'w') as f:
+                            json.dump(current_eval_results, f)
                     
                     log_progress(episode, episodes, info, val_result, best_val_profit, agent.exploration_rate)
                     
@@ -771,52 +896,102 @@ def log_progress(episode: int, total_episodes: int, train_info: dict,
 
 def save_training_results(agent, run_dir: str, history: dict):
     """บันทึกผลลัพธ์การฝึกสอน"""
-    # บันทึกโมเดลสุดท้าย
-    agent.save(os.path.join(run_dir, 'final_model.h5'))
-    
-    # บันทึกประวัติการฝึกสอน
-    pd.DataFrame(history).to_csv(os.path.join(run_dir, 'training_history.csv'), index=False)
-    
-    # สร้างกราฟแสดงประวัติการฝึกสอน
-    plt.figure(figsize=(15, 10))
-    
-    plt.subplot(2, 2, 1)
-    plt.plot(history['train_rewards'])
-    plt.title('Training Rewards')
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
-    
-    plt.subplot(2, 2, 2)
-    plt.plot(history['train_profits'])
-    plt.title('Training Profits')
-    plt.xlabel('Episode')
-    plt.ylabel('Profit')
-    
-    plt.subplot(2, 2, 3)
-    val_episodes = list(range(0, len(history['train_rewards']), 10))
-    plt.plot(val_episodes, history['val_rewards'])
-    plt.title('Validation Rewards')
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
-    
-    plt.subplot(2, 2, 4)
-    plt.plot(val_episodes, history['val_profits'])
-    plt.title('Validation Profits')
-    plt.xlabel('Episode')
-    plt.ylabel('Profit')
-    
-    plt.tight_layout()
-    plt.savefig(os.path.join(run_dir, 'training_history.png'))
-    plt.close()
-    
-    # สร้างกราฟแสดงอัตราการสำรวจ
-    plt.figure(figsize=(10, 5))
-    plt.plot(history['exploration_rates'])
-    plt.title('Exploration Rate (Epsilon)')
-    plt.xlabel('Episode')
-    plt.ylabel('Epsilon')
-    plt.savefig(os.path.join(run_dir, 'exploration_rate.png'))
-    plt.close()
+    try:
+        # ตรวจสอบและแปลง arrays ให้มีความยาวเท่ากัน
+        arrays = ['train_rewards', 'val_rewards', 'train_profits', 'val_profits', 'exploration_rates']
+        min_length = float('inf')
+        
+        # หาความยาวต่ำสุดของ arrays
+        for key in arrays:
+            if key in history:
+                if not isinstance(history[key], list):
+                    history[key] = list(history[key])
+                min_length = min(min_length, len(history[key]))
+        
+        # ตัด arrays ให้มีความยาวเท่ากัน
+        if min_length != float('inf'):
+            for key in arrays:
+                if key in history:
+                    history[key] = history[key][:min_length]
+        
+        # บันทึกโมเดลสุดท้าย
+        agent.save(os.path.join(run_dir, 'final_model.h5'))
+        
+        # บันทึกประวัติการฝึกสอน
+        pd.DataFrame(history).to_csv(os.path.join(run_dir, 'training_history.csv'), index=False)
+        
+        # ตั้งค่าสไตล์ของกราฟ
+        try:
+            import seaborn as sns
+            sns.set_style("whitegrid")
+        except ImportError:
+            plt.style.use('default')
+        
+        # สร้างกราฟแสดงประวัติการฝึกสอน
+        fig = plt.figure(figsize=(20, 15))
+        fig.suptitle('ผลการฝึกสอน DQN Agent', fontsize=16, y=0.95)
+        
+        # กราฟ Training Rewards
+        ax1 = plt.subplot(2, 2, 1)
+        ax1.plot(history['train_rewards'], color='#2ecc71', linewidth=2)
+        ax1.set_title('Training Rewards', fontsize=12, pad=10)
+        ax1.set_xlabel('Episode', fontsize=10)
+        ax1.set_ylabel('Total Reward', fontsize=10)
+        ax1.grid(True, linestyle='--', alpha=0.7)
+        
+        # กราฟ Training Profits
+        ax2 = plt.subplot(2, 2, 2)
+        ax2.plot(history['train_profits'], color='#3498db', linewidth=2)
+        ax2.set_title('Training Profits', fontsize=12, pad=10)
+        ax2.set_xlabel('Episode', fontsize=10)
+        ax2.set_ylabel('Profit', fontsize=10)
+        ax2.grid(True, linestyle='--', alpha=0.7)
+        
+        # กราฟ Validation Rewards
+        ax3 = plt.subplot(2, 2, 3)
+        val_episodes = list(range(0, len(history['train_rewards']), 10))
+        ax3.plot(val_episodes, history['val_rewards'], color='#e74c3c', linewidth=2)
+        ax3.set_title('Validation Rewards', fontsize=12, pad=10)
+        ax3.set_xlabel('Episode', fontsize=10)
+        ax3.set_ylabel('Total Reward', fontsize=10)
+        ax3.grid(True, linestyle='--', alpha=0.7)
+        
+        # กราฟ Validation Profits
+        ax4 = plt.subplot(2, 2, 4)
+        ax4.plot(val_episodes, history['val_profits'], color='#9b59b6', linewidth=2)
+        ax4.set_title('Validation Profits', fontsize=12, pad=10)
+        ax4.set_xlabel('Episode', fontsize=10)
+        ax4.set_ylabel('Profit', fontsize=10)
+        ax4.grid(True, linestyle='--', alpha=0.7)
+        
+        # ปรับแต่ง layout
+        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        
+        # บันทึกกราฟ
+        plt.savefig(os.path.join(run_dir, 'training_history.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+        # สร้างกราฟแสดงอัตราการสำรวจ
+        plt.figure(figsize=(15, 8))
+        plt.plot(history['exploration_rates'], color='#f1c40f', linewidth=2)
+        plt.title('Exploration Rate (Epsilon)', fontsize=14, pad=20)
+        plt.xlabel('Episode', fontsize=12)
+        plt.ylabel('Epsilon', fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        
+        # เพิ่มเส้นแนวตั้งที่แสดงจุดสำคัญ
+        if len(history['exploration_rates']) > 0:
+            plt.axhline(y=0.1, color='r', linestyle='--', alpha=0.5, label='Minimum Epsilon')
+            plt.legend()
+        
+        # บันทึกกราฟ
+        plt.savefig(os.path.join(run_dir, 'exploration_rate.png'), dpi=300, bbox_inches='tight')
+        plt.close()
+        
+    except Exception as e:
+        logger.error(f"เกิดข้อผิดพลาดในการบันทึกผลลัพธ์: {str(e)}")
+        logger.error(f"ประวัติการฝึกสอน: {history}")
+        raise
 
 def parse_args(args=None):
     """
@@ -863,6 +1038,156 @@ def main(args=None):
         episodes=parsed_args.episodes,
         output_dir=parsed_args.output_dir
     )
+
+def format_metric(current: float, previous: float, name: str) -> str:
+    """
+    จัดรูปแบบการแสดงผล metric พร้อมสัญลักษณ์และสี
+    
+    Args:
+        current: ค่าปัจจุบัน
+        previous: ค่าก่อนหน้า
+        name: ชื่อ metric
+        
+    Returns:
+        str: ข้อความที่จัดรูปแบบแล้ว
+    """
+    # ANSI color codes
+    GREEN = '\033[92m'
+    RED = '\033[91m'
+    YELLOW = '\033[93m'
+    RESET = '\033[0m'
+    
+    # สัญลักษณ์
+    UP = '↑'
+    DOWN = '↓'
+    SAME = '→'
+    
+    # คำนวณการเปลี่ยนแปลง
+    if previous is None:
+        change = 0
+    else:
+        change = ((current - previous) / abs(previous)) * 100 if previous != 0 else 0
+    
+    # เลือกสีและสัญลักษณ์
+    if change > 0:
+        color = GREEN
+        symbol = UP
+    elif change < 0:
+        color = RED
+        symbol = DOWN
+    else:
+        color = YELLOW
+        symbol = SAME
+    
+    # จัดรูปแบบตามประเภท metric
+    if name in ['win_rate']:
+        return f"{color}{name}: {current*100:.2f}% {symbol} ({change:+.2f}%){RESET}"
+    elif name in ['sharpe_ratio']:
+        return f"{color}{name}: {current:.2f} {symbol} ({change:+.2f}%){RESET}"
+    else:
+        return f"{color}{name}: {current:.2f} {symbol} ({change:+.2f}%){RESET}"
+
+def log_evaluation_results(results: dict, previous_results: dict = None):
+    """
+    แสดงผลการวัดพร้อมสัญลักษณ์และสี
+    
+    Args:
+        results: ผลการวัดปัจจุบัน
+        previous_results: ผลการวัดก่อนหน้า (ถ้ามี)
+    """
+    logger.info("\n=== ผลการวัดโมเดล ===")
+    
+    # แสดงผลแต่ละ metric
+    metrics = [
+        ('avg_total_profit', 'กำไรรวม'),
+        ('avg_win_rate', 'อัตราการชนะ'),
+        ('avg_profit_per_trade', 'กำไรต่อการเทรด'),
+        ('avg_max_drawdown', 'Drawdown สูงสุด'),
+        ('avg_sharpe_ratio', 'Sharpe Ratio'),
+        ('avg_trades_per_episode', 'จำนวนการเทรดต่อรอบ')
+    ]
+    
+    for metric, name in metrics:
+        current = results[metric]
+        previous = previous_results[metric] if previous_results else None
+        logger.info(format_metric(current, previous, name))
+    
+    # แสดงสรุปภาพรวม
+    if previous_results:
+        improvements = sum(1 for metric, _ in metrics 
+                         if results[metric] > previous_results[metric])
+        total_metrics = len(metrics)
+        improvement_rate = (improvements / total_metrics) * 100
+        
+        logger.info(f"\nภาพรวม: {improvements}/{total_metrics} metrics ดีขึ้น ({improvement_rate:.1f}%)")
+
+def evaluate_model(env, agent, state_size: int, episodes: int = 10) -> dict:
+    """
+    วัดผลโมเดลด้วย metrics ต่างๆ
+    
+    Args:
+        env: สภาพแวดล้อมการเทรด
+        agent: ตัวแทน DQN
+        state_size: ขนาดของ state
+        episodes: จำนวนรอบที่ใช้ทดสอบ
+        
+    Returns:
+        dict: ผลการวัด
+    """
+    metrics = {
+        'total_profits': [],
+        'win_rate': [],
+        'avg_profit_per_trade': [],
+        'max_drawdown': [],
+        'sharpe_ratio': [],
+        'total_trades': []
+    }
+    
+    for episode in range(episodes):
+        state = env.reset()
+        state = np.reshape(state, [1, state_size])
+        done = False
+        episode_profits = []
+        trades = []
+        
+        while not done:
+            action_idx = agent.act(state[0], training=False)
+            action = convert_discrete_to_continuous_action(action_idx)
+            next_state, reward, done, info = env.step(action)
+            next_state = np.reshape(next_state, [1, state_size])
+            state = next_state
+            
+            # บันทึกผลการเทรด
+            if info.get('trade_executed'):
+                trades.append(info['trade_profit'])
+                episode_profits.append(info['trade_profit'])
+        
+        # คำนวณ metrics
+        if trades:
+            metrics['total_profits'].append(sum(trades))
+            metrics['win_rate'].append(len([t for t in trades if t > 0]) / len(trades))
+            metrics['avg_profit_per_trade'].append(np.mean(trades))
+            metrics['max_drawdown'].append(min(trades))
+            metrics['total_trades'].append(len(trades))
+            
+            # คำนวณ Sharpe Ratio
+            if len(episode_profits) > 1:
+                returns = np.diff(episode_profits)
+                if len(returns) > 0:
+                    sharpe = np.mean(returns) / (np.std(returns) + 1e-6) * np.sqrt(252)  # Annualized
+                    metrics['sharpe_ratio'].append(sharpe)
+    
+    # คำนวณค่าเฉลี่ยของ metrics
+    results = {
+        'avg_total_profit': np.mean(metrics['total_profits']),
+        'avg_win_rate': np.mean(metrics['win_rate']),
+        'avg_profit_per_trade': np.mean(metrics['avg_profit_per_trade']),
+        'avg_max_drawdown': np.mean(metrics['max_drawdown']),
+        'avg_sharpe_ratio': np.mean(metrics['sharpe_ratio']),
+        'avg_trades_per_episode': np.mean(metrics['total_trades'])
+    }
+    
+    return results
 
 if __name__ == '__main__':
     main()
