@@ -1,10 +1,19 @@
+# api
 flask
 flask-cors
 google-auth
 requests
 PyJWT
-ccxt
-pandas
-numpy
 python-dotenv
 
+# trading
+pandas
+gym
+stable-baselines3
+matplotlib
+seaborn
+ta
+scikit-learn
+pyyaml
+ccxt
+keras
