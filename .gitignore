@@ -47,8 +47,9 @@ logs/*
 PROJECT_STRUCTURE.md
 !PROJECT_STRUCTURE.md.example
 
-# Legacy backend
+# Backend
 backend/
+backend/**/*
 
 # Logs
 logs/
