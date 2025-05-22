@@ -2,9 +2,16 @@
 ตรวจสอบและแสดงข้อมูล GPU สำหรับการเทรด
 """
 
+import os
+import sys
+from pathlib import Path
+
+# เพิ่ม path ของโปรเจค
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
 import tensorflow as tf
 import logging
-import os
 import platform
 import psutil
 from typing import Dict, Any, Optional
@@ -101,35 +108,37 @@ class GPUChecker:
             Dict[str, Any]: ข้อมูล GPU
         """
         try:
-            # ตั้งค่า logging
-            os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-            tf.get_logger().setLevel('ERROR')
+            # ตรวจสอบเวอร์ชัน TensorFlow
+            logger.info(f"TensorFlow version: {tf.__version__}")
+            
+            # ตรวจสอบ GPU ที่มีอยู่
+            gpus = tf.config.list_physical_devices('GPU')
+            if gpus:
+                logger.info(f"Found {len(gpus)} GPU(s):")
+                for gpu in gpus:
+                    logger.info(f"  - {gpu}")
+            else:
+                logger.warning("No GPU found. Running on CPU only.")
+            
+            # ตรวจสอบว่าสามารถใช้ GPU ได้หรือไม่
+            if tf.test.is_built_with_cuda():
+                logger.info("TensorFlow is built with CUDA support")
+            else:
+                logger.warning("TensorFlow is not built with CUDA support")
             
             # ตรวจสอบ CUDA
             cuda_info = GPUChecker.get_cuda_info()
-            
-            # ตรวจสอบ GPU
-            gpus = tf.config.list_physical_devices('GPU')
-            
-            if not gpus:
-                logger.info("ไม่พบ GPU จะใช้ CPU แทน")
-                return {
-                    'available': False,
-                    'count': 0,
-                    'devices': [],
-                    'memory_growth': False,
-                    'mixed_precision': False,
-                    'tensorflow_version': tf.__version__,
-                    'system_info': GPUChecker.get_system_info(),
-                    'cuda_info': cuda_info
-                }
             
             # ตั้งค่า memory growth
             for gpu in gpus:
                 tf.config.experimental.set_memory_growth(gpu, True)
             
             # ตั้งค่า mixed precision
-            tf.keras.mixed_precision.set_global_policy('mixed_float16')
+            try:
+                tf.keras.mixed_precision.set_global_policy('mixed_float16')
+                mixed_precision = True
+            except:
+                mixed_precision = False
             
             # เก็บข้อมูล GPU
             gpu_info = {
@@ -137,7 +146,7 @@ class GPUChecker:
                 'count': len(gpus),
                 'devices': [gpu.name for gpu in gpus],
                 'memory_growth': True,
-                'mixed_precision': True,
+                'mixed_precision': mixed_precision,
                 'tensorflow_version': tf.__version__,
                 'system_info': GPUChecker.get_system_info(),
                 'cuda_info': cuda_info
@@ -148,7 +157,7 @@ class GPUChecker:
             for gpu in gpus:
                 logger.info(f"ชื่อ GPU: {gpu.name}")
             logger.info("เปิดใช้งาน memory growth")
-            logger.info("เปิดใช้งาน mixed precision")
+            logger.info(f"เปิดใช้งาน mixed precision: {mixed_precision}")
             
             if cuda_info['available']:
                 logger.info(f"CUDA Version: {cuda_info['version']}")

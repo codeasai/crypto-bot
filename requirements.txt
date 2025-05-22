@@ -1,6 +1,4 @@
+tensorflow<2.11
 gym
 ta
 ccxt
-python-dotenv
-scikit-learn
-tqdm 

@@ -1,0 +1,49 @@
+/* Main theme colors */
+:root {
+    --primary-color: #1E88E5;
+    --secondary-color: #26A69A;
+    --background-color: #F5F5F5;
+    --text-color: #333333;
+}
+
+/* Global styles */
+body {
+    font-family: 'Roboto', sans-serif;
+    background-color: var(--background-color);
+    color: var(--text-color);
+}
+
+/* Sidebar customization */
+.sidebar .sidebar-content {
+    background-color: white;
+}
+
+/* Card styles */
+.stMetric {
+    background-color: white;
+    border-radius: 8px;
+    padding: 1rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+/* Button styles */
+.stButton>button {
+    background-color: var(--primary-color);
+    color: white;
+    border-radius: 4px;
+    padding: 0.5rem 1rem;
+    border: none;
+}
+
+.stButton>button:hover {
+    background-color: #1976D2;
+}
+
+/* Chart container */
+.chart-container {
+    background-color: white;
+    border-radius: 8px;
+    padding: 1rem;
+    margin: 1rem 0;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+} 
