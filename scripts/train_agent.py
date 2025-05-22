@@ -856,23 +856,36 @@ def train_dqn_agent(
         return None
 
 def convert_discrete_to_continuous_action(action_idx: int) -> np.ndarray:
-    """แปลง discrete action เป็น continuous action"""
-    if action_idx == 0:  # ขายหนัก
-        return np.array([-1.0, 1.0])
-    elif action_idx == 1:  # ขายปานกลาง
-        return np.array([-0.66, 0.66])
-    elif action_idx == 2:  # ขายเบา
-        return np.array([-0.33, 0.33])
-    elif action_idx == 3:  # ถือครอง
+    """
+    Converts a discrete action index to a continuous action array [position, leverage].
+    - Position: Proportion of balance to allocate (-1.0 for full short, 1.0 for full long).
+    - Leverage: Leverage to apply (0.0 for no leverage, 0.5 for specified buy/sell actions).
+
+    Args:
+        action_idx (int): Discrete action index (0-6).
+
+    Returns:
+        np.ndarray: Continuous action array [position, leverage].
+    
+    Raises:
+        ValueError: If action_idx is not supported.
+    """
+    if action_idx == 0:  # Strong Sell
+        return np.array([-1.0, 0.5])
+    elif action_idx == 1:  # Medium Sell
+        return np.array([-0.5, 0.5])
+    elif action_idx == 2:  # Light Sell
+        return np.array([-0.25, 0.5])
+    elif action_idx == 3:  # Hold
         return np.array([0.0, 0.0])
-    elif action_idx == 4:  # ซื้อเบา
-        return np.array([0.33, 0.33])
-    elif action_idx == 5:  # ซื้อปานกลาง
-        return np.array([0.66, 0.66])
-    elif action_idx == 6:  # ซื้อหนัก
-        return np.array([1.0, 1.0])
+    elif action_idx == 4:  # Light Buy
+        return np.array([0.25, 0.5])
+    elif action_idx == 5:  # Medium Buy
+        return np.array([0.5, 0.5])
+    elif action_idx == 6:  # Strong Buy
+        return np.array([1.0, 0.5])
     else:
-        raise ValueError(f"ไม่รองรับ action index: {action_idx}")
+        raise ValueError(f"Unsupported action index: {action_idx}")
 
 def validate_episode(env, agent, state_size: int) -> dict:
     """ตรวจสอบผลลัพธ์ในรอบการตรวจสอบ"""

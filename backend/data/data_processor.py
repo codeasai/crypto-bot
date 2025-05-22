@@ -11,6 +11,23 @@ from typing import List, Dict, Tuple, Optional
 from datetime import datetime, timedelta
 from .data_collector import BinanceDataCollector
 import logging
+import datetime # Added for save_processed_data
+
+# Attempt to import DATA_CONFIG, but provide a fallback if not found
+try:
+    from backend.config.config import DATA_CONFIG
+except ImportError:
+    logger.warning("Could not import DATA_CONFIG from backend.config.config. Using default values.")
+    DATA_CONFIG = {
+        'data_dir': 'data/features', # Default data directory for saving processed data
+        'technical_indicators': [ # Default list of technical indicators
+            'sma_10', 'sma_30', 'sma_50', 'ema_10', 'ema_30', 'rsi_14', 
+            'macd', 'macd_signal', 'macd_hist', 'bb_upper', 'bb_middle', 
+            'bb_lower', 'bb_pct_b', 'atr_14', 'daily_return'
+        ],
+        'price_features': ['open', 'high', 'low', 'close', 'volume'] # Default price features
+    }
+
 
 logger = logging.getLogger(__name__)
 
@@ -27,27 +44,37 @@ class DataProcessor:
             data_dir (str): โฟลเดอร์ที่เก็บไฟล์ข้อมูล
         """
         self.data_dir = data_dir
-        
+        self.df = None # Will store the current working DataFrame
+        self.df_features = None # For DataFrame with added features
+        self.df_normalized = None # For normalized DataFrame
+        self.df_cleaned = None # For cleaned DataFrame
+        self.df_selected = None # For DataFrame with selected features
+
     def load_data(self, symbol: str, timeframe: str = '1h', 
                  start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
         """
-        โหลดข้อมูลราคาจากไฟล์
+        Loads price data from files or fetches from Binance if files are not found.
+        Saves the loaded data to self.df.
         
         Args:
-            symbol (str): สัญลักษณ์คู่เหรียญ เช่น 'BTCUSDT'
-            timeframe (str): กรอบเวลา เช่น '1m', '5m', '1h', '1d'
-            start_date (str, optional): วันที่เริ่มต้น ในรูปแบบ 'YYYY-MM-DD'
-            end_date (str, optional): วันที่สิ้นสุด ในรูปแบบ 'YYYY-MM-DD'
+            symbol (str): Cryptocurrency symbol, e.g., 'BTCUSDT'
+            timeframe (str): Timeframe, e.g., '1m', '5m', '1h', '1d'
+            start_date (str, optional): Start date in 'YYYY-MM-DD' format
+            end_date (str, optional): End date in 'YYYY-MM-DD' format
             
         Returns:
-            pd.DataFrame: DataFrame ที่มีข้อมูลราคา
+            pd.DataFrame: DataFrame with price data
         """
-        # ค้นหาไฟล์ข้อมูล
-        filepath_pattern = os.path.join(self.data_dir, f"{symbol}_{timeframe}_*.csv")
+        # Define data directory for raw klines
+        raw_data_dir = os.path.join(self.data_dir, 'datasets') # Changed to look into 'datasets' subdirectory
+        os.makedirs(raw_data_dir, exist_ok=True) # Ensure directory exists
+
+        # Search for data files
+        filepath_pattern = os.path.join(raw_data_dir, f"{symbol}_{timeframe}_*.csv")
         filepaths = glob.glob(filepath_pattern)
         
         if not filepaths:
-            print(f"ไม่พบไฟล์ข้อมูลสำหรับ {symbol} ที่กรอบเวลา {timeframe} กำลังดึงข้อมูลจาก Binance...")
+            logger.info(f"No data files found for {symbol} timeframe {timeframe} in {raw_data_dir}. Attempting to fetch from Binance...")
             # สร้าง instance ของ BinanceDataCollector
             collector = BinanceDataCollector(
                 symbol=symbol,
@@ -63,398 +90,608 @@ class DataProcessor:
         # อ่านและรวมข้อมูลจากทุกไฟล์ที่พบ
         dfs = []
         for filepath in filepaths:
-            df = pd.read_csv(filepath)
-            dfs.append(df)
+            df_temp = pd.read_csv(filepath) # Renamed to df_temp to avoid conflict with self.df
+            dfs.append(df_temp)
         
         if not dfs:
-            print(f"ไม่สามารถโหลดข้อมูลสำหรับ {symbol} กำลังดึงข้อมูลจาก Binance...")
-            # สร้าง instance ของ BinanceDataCollector
+            logger.info(f"No data files found for {symbol} timeframe {timeframe}. Fetching from Binance...")
             collector = BinanceDataCollector(
                 symbol=symbol,
                 interval=timeframe,
                 start_date=start_date,
                 end_date=end_date,
-                testnet=True  # ใช้ testnet สำหรับการทดสอบ
+                # testnet=True, # Consider making this configurable or removing if not always testnet
+                data_dir=raw_data_dir # Pass the correct data_dir for saving
             )
-            # ดึงข้อมูลจาก Binance
-            df = collector.get_historical_klines()
-            return df
+            data = collector.get_historical_klines() # Fetched data
+            if data.empty:
+                logger.error(f"Failed to fetch data for {symbol} from Binance.")
+                self.df = pd.DataFrame() # Set self.df to empty DataFrame
+                return self.df 
+            # Save the fetched data
+            # filename = f"{symbol}_{timeframe}_{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}.csv"
+            # save_path = os.path.join(raw_data_dir, filename)
+            # data.to_csv(save_path, index=False)
+            # logger.info(f"Saved fetched data to {save_path}")
+
+        else:
+            # Combine data from all found files
+            data = pd.concat(dfs)
         
-        # รวมข้อมูลและจัดเรียงตามเวลา
-        data = pd.concat(dfs)
-        
-        # ตรวจสอบและเพิ่มคอลัมน์เวลา
+        # Ensure 'timestamp' column exists and is of datetime type
         if 'timestamp' not in data.columns and 'time' in data.columns:
             data = data.rename(columns={'time': 'timestamp'})
         
-        # แปลงคอลัมน์เวลาให้เป็นรูปแบบ datetime
         if 'timestamp' in data.columns:
             if pd.api.types.is_numeric_dtype(data['timestamp']):
-                # ถ้าเป็นตัวเลข (timestamp) ให้แปลงเป็น datetime
                 data['timestamp'] = pd.to_datetime(data['timestamp'], unit='ms')
             else:
-                # ถ้าเป็นสตริง ให้แปลงเป็น datetime
                 data['timestamp'] = pd.to_datetime(data['timestamp'])
-        
-        # กรองตามช่วงวันที่
+        else: # If no timestamp column, try to use index if it's datetime
+            if isinstance(data.index, pd.DatetimeIndex):
+                data['timestamp'] = data.index
+            else: # if no time information at all, raise error.
+                logger.error("Timestamp column not found and index is not datetime. Cannot proceed.")
+                self.df = pd.DataFrame()
+                return self.df
+
+
+        # Filter by date range
         if start_date:
-            start_date = pd.to_datetime(start_date)
-            data = data[data['timestamp'] >= start_date]
+            start_date_dt = pd.to_datetime(start_date)
+            data = data[data['timestamp'] >= start_date_dt]
         if end_date:
-            end_date = pd.to_datetime(end_date)
-            data = data[data['timestamp'] <= end_date]
+            end_date_dt = pd.to_datetime(end_date)
+            data = data[data['timestamp'] <= end_date_dt]
         
-        # จัดเรียงข้อมูลตามเวลา
+        # Sort data by timestamp
         data = data.sort_values('timestamp').reset_index(drop=True)
         
-        # ตรวจสอบว่ามีคอลัมน์ที่จำเป็นหรือไม่
+        # Verify required columns
         required_columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
         for col in required_columns:
             if col not in data.columns:
-                raise ValueError(f"ไม่พบคอลัมน์ {col} ในข้อมูล")
+                logger.error(f"Missing required column: {col}")
+                # raise ValueError(f"ไม่พบคอลัมน์ {col} ในข้อมูล") # Original error
+                self.df = pd.DataFrame() # Set self.df to empty DataFrame
+                return self.df 
+
+        self.df = data.copy() # Store loaded data in self.df
+        logger.info(f"Data loaded successfully for {symbol} with shape {self.df.shape}")
+        return self.df
+
+    def handle_missing_values(self, df: pd.DataFrame, method: str = 'forward') -> pd.DataFrame:
+        """
+        Handles missing data in the DataFrame.
         
-        return data
-    
+        Args:
+            df (pd.DataFrame): Input DataFrame.
+            method (str): Method to handle missing values ('forward', 'backward', 'interpolate', 'drop', 'mean').
+            
+        Returns:
+            pd.DataFrame: DataFrame with missing values handled.
+        """
+        if df is None or df.empty:
+            logger.warning("Input DataFrame for handle_missing_values is None or empty.")
+            return pd.DataFrame()
+
+        df_cleaned = df.copy()
+        total_rows = len(df_cleaned)
+        missing_values = df_cleaned.isnull().sum()
+        missing_values = missing_values[missing_values > 0]
+
+        if not missing_values.empty:
+            logger.info(f"Found missing values:\n{missing_values}")
+            if method == 'forward':
+                logger.info("Applying forward fill for missing values.")
+                df_cleaned.fillna(method='ffill', inplace=True)
+            elif method == 'backward':
+                logger.info("Applying backward fill for missing values.")
+                df_cleaned.fillna(method='bfill', inplace=True)
+            elif method == 'interpolate':
+                logger.info("Applying linear interpolation for missing values.")
+                df_cleaned.interpolate(method='linear', inplace=True)
+            elif method == 'drop':
+                logger.info("Dropping rows with missing values.")
+                df_cleaned.dropna(inplace=True)
+            elif method == 'mean':
+                logger.info("Filling missing values with column mean.")
+                for col in df_cleaned.columns:
+                    if df_cleaned[col].isnull().any():
+                        if pd.api.types.is_numeric_dtype(df_cleaned[col]):
+                            df_cleaned[col].fillna(df_cleaned[col].mean(), inplace=True)
+                        else:
+                            logger.warning(f"Column {col} is not numeric, cannot fill with mean. Skipping.")
+            else:
+                logger.error(f"Unknown missing value handling method: {method}")
+                raise ValueError(f"Unknown missing value handling method: {method}")
+
+            remaining_missing = df_cleaned.isnull().sum().sum()
+            if remaining_missing > 0:
+                logger.warning(f"Still {remaining_missing} missing values remaining after handling. Consider using 'drop' or checking data source.")
+            
+            if method == 'drop' and len(df_cleaned) < total_rows:
+                logger.info(f"Dropped {total_rows - len(df_cleaned)} rows with missing values.")
+        else:
+            logger.info("No missing values found.")
+        
+        self.df_cleaned = df_cleaned.copy()
+        return self.df_cleaned
+
     def add_technical_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        เพิ่ม technical indicators ให้กับข้อมูล
+        Adds a comprehensive set of technical indicators to the DataFrame.
+        This method combines indicators from both original files.
         
         Args:
-            df (pd.DataFrame): ข้อมูลที่ต้องการเพิ่ม indicators
+            df (pd.DataFrame): DataFrame with price data (OHLCV).
             
         Returns:
-            pd.DataFrame: ข้อมูลที่มี indicators เพิ่มเติม
+            pd.DataFrame: DataFrame with added technical indicators.
         """
+        if df is None or df.empty:
+            logger.warning("Input DataFrame for add_technical_indicators is None or empty.")
+            return pd.DataFrame()
+
+        df_with_indicators = df.copy()
+        
         try:
-            # ตรวจสอบข้อมูลที่เข้ามา
-            logger.info("ข้อมูลก่อนเพิ่ม technical indicators:")
-            logger.info(f"\n{df.dtypes}")
-            
-            # ตรวจสอบคอลัมน์ที่จำเป็น
-            required_columns = ['open', 'high', 'low', 'close', 'volume']
-            for col in required_columns:
+            logger.info("Data before adding technical indicators:")
+            logger.info(f"\n{df_with_indicators.dtypes}")
+
+            # Ensure required columns exist
+            required_cols = ['open', 'high', 'low', 'close', 'volume']
+            for col in required_cols:
                 if col not in df.columns:
-                    raise ValueError(f"ไม่พบคอลัมน์ {col} ในข้อมูล")
-            
-            # แปลงข้อมูลเป็น numeric
-            df_with_indicators = df.copy()
+                    logger.error(f"Missing required column for TA calculation: {col}")
+                    raise ValueError(f"Missing required column for TA calculation: {col}")
+
+            # Convert to numeric, coercing errors
             for col in df_with_indicators.columns:
-                if col not in ['date', 'timestamp']:
+                if col not in ['date', 'timestamp']: # Assuming 'date' might be another non-numeric col
                     df_with_indicators[col] = pd.to_numeric(df_with_indicators[col], errors='coerce')
             
-            # ตรวจสอบและจัดการค่า NaN
-            nan_counts = df_with_indicators.isna().sum()
-            if nan_counts.any():
-                logger.warning(f"พบค่า NaN ในข้อมูล: {nan_counts[nan_counts > 0]}")
-                # แทนที่ค่า NaN ด้วยค่าเฉลี่ย
-                df_with_indicators = df_with_indicators.fillna(df_with_indicators.mean())
+            # Initial NaN/inf check and fill (using mean for simplicity here, can be customized)
+            df_with_indicators.replace([np.inf, -np.inf], np.nan, inplace=True)
+            # Call handle_missing_values to manage NaNs before TA calculation
+            # This ensures that TA calculations have valid inputs as much as possible
+            df_with_indicators = self.handle_missing_values(df_with_indicators, method='mean')
+
+
+            # --- Start TA calculations (merged and expanded) ---
+            logger.info("Calculating technical indicators...")
+
+            # Moving Averages (SMA & EMA)
+            sma_windows = [7, 10, 25, 30, 50, 99]
+            ema_windows = [7, 10, 25, 30, 99]
+            for window in sma_windows:
+                df_with_indicators[f'sma_{window}'] = ta.trend.sma_indicator(df_with_indicators['close'], window=window, fillna=True)
+            for window in ema_windows:
+                df_with_indicators[f'ema_{window}'] = ta.trend.ema_indicator(df_with_indicators['close'], window=window, fillna=True)
+
+            # RSI
+            df_with_indicators['rsi_14'] = ta.momentum.rsi(df_with_indicators['close'], window=14, fillna=True)
+
+            # MACD
+            macd = ta.trend.MACD(df_with_indicators['close'], window_slow=26, window_fast=12, window_sign=9, fillna=True)
+            df_with_indicators['macd'] = macd.macd()
+            df_with_indicators['macd_signal'] = macd.macd_signal()
+            df_with_indicators['macd_hist'] = macd.macd_diff()
+
+            # Bollinger Bands
+            bollinger = ta.volatility.BollingerBands(df_with_indicators['close'], window=20, window_dev=2, fillna=True)
+            df_with_indicators['bb_upper'] = bollinger.bollinger_hband()
+            df_with_indicators['bb_middle'] = bollinger.bollinger_mavg()
+            df_with_indicators['bb_lower'] = bollinger.bollinger_lband()
+            df_with_indicators['bb_pct_b'] = bollinger.bollinger_pband() # From FeatureEngineering
+
+            # Stochastic Oscillator
+            stoch = ta.momentum.StochasticOscillator(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, smooth_window=3, fillna=True)
+            df_with_indicators['stoch_k'] = stoch.stoch()
+            df_with_indicators['stoch_d'] = stoch.stoch_signal()
+
+            # ADX
+            df_with_indicators['adx'] = ta.trend.adx(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, fillna=True)
+
+            # OBV
+            df_with_indicators['obv'] = ta.volume.on_balance_volume(df_with_indicators['close'], df_with_indicators['volume'], fillna=True)
+
+            # ATR
+            df_with_indicators['atr_14'] = ta.volatility.average_true_range(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, fillna=True)
             
-            # ตรวจสอบและจัดการค่า inf
-            inf_mask = np.isinf(df_with_indicators.select_dtypes(include=np.number))
-            if inf_mask.any().any():
-                logger.warning("พบค่า inf ในข้อมูล กำลังแทนที่ด้วยค่า NaN")
-                df_with_indicators = df_with_indicators.replace([np.inf, -np.inf], np.nan)
-                df_with_indicators = df_with_indicators.fillna(df_with_indicators.mean())
+            # CCI
+            df_with_indicators['cci'] = ta.trend.cci(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=20, fillna=True)
+
+            # MFI
+            df_with_indicators['mfi'] = ta.volume.money_flow_index(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], df_with_indicators['volume'], window=14, fillna=True)
+
+            # ROC
+            df_with_indicators['roc'] = ta.momentum.roc(df_with_indicators['close'], window=12, fillna=True)
+
+            # Price to Moving Average Ratios
+            for window in [7, 25, 99]:
+                if f'sma_{window}' in df_with_indicators.columns: # Check if SMA was calculated
+                     df_with_indicators[f'close_sma_{window}_pct'] = (df_with_indicators['close'] / df_with_indicators[f'sma_{window}']) - 1
+                if f'ema_{window}' in df_with_indicators.columns: # Check if EMA was calculated
+                     df_with_indicators[f'close_ema_{window}_pct'] = (df_with_indicators['close'] / df_with_indicators[f'ema_{window}']) - 1
+
+
+            # Price Changes
+            for period in [1, 5, 10]:
+                df_with_indicators[f'close_pct_change_{period}'] = df_with_indicators['close'].pct_change(period).fillna(0)
             
-            # ตรวจสอบและจัดการค่าลบ
-            for col in df_with_indicators.select_dtypes(include=np.number).columns:
-                if (df_with_indicators[col] < 0).any():
-                    logger.warning(f"พบค่าลบในคอลัมน์ {col} กำลังแปลงเป็นค่าสัมบูรณ์")
-                    df_with_indicators[col] = df_with_indicators[col].abs()
-            
-            # ตรวจสอบและจัดการค่า 0
-            for col in df_with_indicators.select_dtypes(include=np.number).columns:
-                if (df_with_indicators[col] == 0).any():
-                    logger.warning(f"พบค่า 0 ในคอลัมน์ {col} กำลังแทนที่ด้วยค่าเฉลี่ย")
-                    mean_value = df_with_indicators[col].mean()
-                    df_with_indicators[col] = df_with_indicators[col].replace(0, mean_value)
-            
-            # ตรวจสอบความยาวของข้อมูล
-            if len(df_with_indicators) < 100:
-                raise ValueError(f"ข้อมูลไม่เพียงพอ ต้องการอย่างน้อย 100 แท่ง แต่มีเพียง {len(df_with_indicators)} แท่ง")
-            
-            # ตรวจสอบการเรียงลำดับข้อมูล
-            if not df_with_indicators.index.is_monotonic_increasing:
-                logger.warning("ข้อมูลไม่ได้เรียงตามเวลา กำลังเรียงลำดับใหม่")
-                df_with_indicators = df_with_indicators.sort_index()
-            
-            # คำนวณ indicators
-            try:
-                # Moving Averages
-                df_with_indicators['sma_7'] = ta.trend.sma_indicator(df_with_indicators['close'], window=7, fillna=True)
-                df_with_indicators['sma_25'] = ta.trend.sma_indicator(df_with_indicators['close'], window=25, fillna=True)
-                df_with_indicators['sma_99'] = ta.trend.sma_indicator(df_with_indicators['close'], window=99, fillna=True)
-                df_with_indicators['ema_7'] = ta.trend.ema_indicator(df_with_indicators['close'], window=7, fillna=True)
-                df_with_indicators['ema_25'] = ta.trend.ema_indicator(df_with_indicators['close'], window=25, fillna=True)
-                df_with_indicators['ema_99'] = ta.trend.ema_indicator(df_with_indicators['close'], window=99, fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Moving Averages: {str(e)}")
-                raise
-            
-            try:
-                # RSI
-                df_with_indicators['rsi_14'] = ta.momentum.rsi(df_with_indicators['close'], window=14, fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ RSI: {str(e)}")
-                raise
-            
-            try:
-                # MACD
-                macd = ta.trend.MACD(df_with_indicators['close'], window_slow=26, window_fast=12, window_sign=9, fillna=True)
-                df_with_indicators['macd'] = macd.macd()
-                df_with_indicators['macd_signal'] = macd.macd_signal()
-                df_with_indicators['macd_hist'] = macd.macd_diff()
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ MACD: {str(e)}")
-                raise
-            
-            try:
-                # Bollinger Bands
-                bollinger = ta.volatility.BollingerBands(df_with_indicators['close'], window=20, window_dev=2, fillna=True)
-                df_with_indicators['bb_upper'] = bollinger.bollinger_hband()
-                df_with_indicators['bb_middle'] = bollinger.bollinger_mavg()
-                df_with_indicators['bb_lower'] = bollinger.bollinger_lband()
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Bollinger Bands: {str(e)}")
-                raise
-            
-            try:
-                # Stochastic Oscillator
-                stoch = ta.momentum.StochasticOscillator(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, smooth_window=3, fillna=True)
-                df_with_indicators['stoch_k'] = stoch.stoch()
-                df_with_indicators['stoch_d'] = stoch.stoch_signal()
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Stochastic Oscillator: {str(e)}")
-                raise
-            
-            try:
-                # ADX
-                df_with_indicators['adx'] = ta.trend.adx(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ ADX: {str(e)}")
-                raise
-            
-            try:
-                # OBV
-                df_with_indicators['obv'] = ta.volume.on_balance_volume(df_with_indicators['close'], df_with_indicators['volume'], fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ OBV: {str(e)}")
-                raise
-            
-            try:
-                # ATR
-                df_with_indicators['atr'] = ta.volatility.average_true_range(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=14, fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ ATR: {str(e)}")
-                raise
-            
-            try:
-                # CCI
-                df_with_indicators['cci'] = ta.trend.cci(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], window=20, fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ CCI: {str(e)}")
-                raise
-            
-            try:
-                # MFI
-                df_with_indicators['mfi'] = ta.volume.money_flow_index(df_with_indicators['high'], df_with_indicators['low'], df_with_indicators['close'], df_with_indicators['volume'], window=14, fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ MFI: {str(e)}")
-                raise
-            
-            try:
-                # ROC
-                df_with_indicators['roc'] = ta.momentum.roc(df_with_indicators['close'], window=12, fillna=True)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ ROC: {str(e)}")
-                raise
-            
-            try:
-                # Price to Moving Average Ratios
-                df_with_indicators['close_sma_7_pct'] = df_with_indicators['close'] / df_with_indicators['sma_7'] - 1
-                df_with_indicators['close_sma_25_pct'] = df_with_indicators['close'] / df_with_indicators['sma_25'] - 1
-                df_with_indicators['close_sma_99_pct'] = df_with_indicators['close'] / df_with_indicators['sma_99'] - 1
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Price to Moving Average Ratios: {str(e)}")
-                raise
-            
-            try:
-                # Price Changes
-                df_with_indicators['close_pct_change_1'] = df_with_indicators['close'].pct_change(1).fillna(0)
-                df_with_indicators['close_pct_change_5'] = df_with_indicators['close'].pct_change(5).fillna(0)
-                df_with_indicators['close_pct_change_10'] = df_with_indicators['close'].pct_change(10).fillna(0)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Price Changes: {str(e)}")
-                raise
-            
-            try:
-                # Volatility
-                df_with_indicators['volatility_5'] = df_with_indicators['close'].rolling(window=5).std().fillna(0)
-                df_with_indicators['volatility_15'] = df_with_indicators['close'].rolling(window=15).std().fillna(0)
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Volatility: {str(e)}")
-                raise
-            
-            try:
-                # Volume Indicators
-                df_with_indicators['volume_sma_5'] = ta.trend.sma_indicator(df_with_indicators['volume'], window=5, fillna=True)
-                df_with_indicators['volume_sma_20'] = ta.trend.sma_indicator(df_with_indicators['volume'], window=20, fillna=True)
+            # Daily Return (from FeatureEngineering)
+            df_with_indicators['daily_return'] = df_with_indicators['close'].pct_change().fillna(0)
+
+
+            # Volatility (Standard Deviation)
+            for window in [5, 15]:
+                df_with_indicators[f'volatility_{window}'] = df_with_indicators['close'].rolling(window=window).std().fillna(0)
+
+            # Volume Indicators
+            for window in [5, 20]:
+                 df_with_indicators[f'volume_sma_{window}'] = ta.trend.sma_indicator(df_with_indicators['volume'], window=window, fillna=True)
+            if 'volume_sma_20' in df_with_indicators.columns and df_with_indicators['volume_sma_20'].notna().all() and (df_with_indicators['volume_sma_20'] != 0).all(): # Ensure sma is calculated and not zero
                 df_with_indicators['volume_ratio'] = df_with_indicators['volume'] / df_with_indicators['volume_sma_20']
-            except Exception as e:
-                logger.error(f"เกิดข้อผิดพลาดในการคำนวณ Volume Indicators: {str(e)}")
-                raise
-            
-            # ตรวจสอบค่า NaN หลังคำนวณ
-            nan_counts = df_with_indicators.isna().sum()
-            if nan_counts.any():
-                logger.warning(f"พบค่า NaN ในข้อมูลหลังคำนวณ indicators:\n{nan_counts[nan_counts > 0]}")
-                # แทนที่ค่า NaN ด้วยค่าเฉลี่ย
-                df_with_indicators = df_with_indicators.fillna(df_with_indicators.mean())
-            
-            # ตรวจสอบความยาวของข้อมูล
+            else:
+                df_with_indicators['volume_ratio'] = 0 # Set to 0 or some other placeholder if sma is zero or not available
+                logger.warning("volume_sma_20 contains zeros or NaNs, volume_ratio might be incorrect.")
+
+
+            # --- End TA calculations ---
+
+            # Final check for NaNs created by TA calculations (especially due to window periods)
+            # Using ffill as a common strategy for time-series based indicators
+            df_with_indicators.fillna(method='ffill', inplace=True) 
+            df_with_indicators.fillna(method='bfill', inplace=True) # backfill any remaining NaNs at the beginning
+
+            # Ensure original length if any rows were dropped internally by TA library (though fillna=True should prevent this)
             if len(df_with_indicators) != len(df):
-                logger.warning(f"ความยาวของข้อมูลเปลี่ยนจาก {len(df)} เป็น {len(df_with_indicators)}")
-                # ตัดข้อมูลให้มีความยาวเท่ากับข้อมูลเดิม
-                df_with_indicators = df_with_indicators.iloc[-len(df):]
-            
-            return df_with_indicators
-            
+                logger.warning(f"DataFrame length changed from {len(df)} to {len(df_with_indicators)} after adding indicators. Re-aligning.")
+                # This might indicate an issue, but for now, re-aligning to original index
+                df_with_indicators = df_with_indicators.reindex(df.index, method='ffill').fillna(method='bfill')
+
+
+            logger.info(f"Finished adding technical indicators. DataFrame shape: {df_with_indicators.shape}")
+            self.df_features = df_with_indicators.copy()
+            return self.df_features
+
         except Exception as e:
-            logger.error(f"เกิดข้อผิดพลาดในการคำนวณ technical indicators: {str(e)}")
+            logger.error(f"Error calculating technical indicators: {str(e)}")
+            # Optionally, return the DataFrame as it was before this method, or an empty one
+            # For now, re-raise to indicate failure
             raise
-    
-    def normalize_data(self, df: pd.DataFrame, columns_to_exclude: List[str] = ['timestamp']) -> pd.DataFrame:
+
+    def normalize_features(self, df: pd.DataFrame, method: str = 'minmax', columns_to_exclude: List[str] = ['timestamp', 'date']) -> pd.DataFrame:
         """
-        ปรับข้อมูลให้อยู่ในรูปแบบปกติ (Normalized) เพื่อให้เหมาะกับการเรียนรู้ของโมเดล
+        Normalizes features in the DataFrame using either Min-Max or Z-score scaling.
         
         Args:
-            df (pd.DataFrame): DataFrame ที่ต้องการปรับให้เป็นปกติ
-            columns_to_exclude (List[str]): คอลัมน์ที่ไม่ต้องการปรับ
+            df (pd.DataFrame): DataFrame to normalize.
+            method (str): Normalization method ('minmax' or 'zscore').
+            columns_to_exclude (List[str]): Columns to exclude from normalization.
             
         Returns:
-            pd.DataFrame: DataFrame ที่ถูกปรับให้เป็นปกติแล้ว
+            pd.DataFrame: Normalized DataFrame.
         """
-        try:
-            df_normalized = df.copy()
+        if df is None or df.empty:
+            logger.warning("Input DataFrame for normalize_features is None or empty.")
+            return pd.DataFrame()
+
+        df_normalized = df.copy()
+        
+        feature_columns = [col for col in df_normalized.columns if col not in columns_to_exclude]
+        
+        logger.info(f"Starting normalization with method: {method}")
+
+        for col in feature_columns:
+            df_normalized[col] = pd.to_numeric(df_normalized[col], errors='coerce')
             
-            # เลือกเฉพาะคอลัมน์ที่ต้องการปรับให้เป็นปกติ
-            columns_to_normalize = [col for col in df.columns if col not in columns_to_exclude]
-            
-            for col in columns_to_normalize:
-                # แปลงเป็นตัวเลข
-                df_normalized[col] = pd.to_numeric(df_normalized[col], errors='coerce')
-                
-                # ตรวจสอบจำนวนค่า NaN
-                nan_count = df_normalized[col].isna().sum()
-                if nan_count > 0:
-                    logger.warning(f"พบค่า NaN {nan_count} ค่าในคอลัมน์ {col}")
-                    # แทนที่ค่า NaN ด้วยค่าเฉลี่ย
-                    mean_value = df_normalized[col].mean()
-                    df_normalized[col] = df_normalized[col].fillna(mean_value)
-                
-                # ตรวจสอบและแทนที่ค่า inf และ -inf
-                inf_count = df_normalized[col].isin([np.inf, -np.inf]).sum()
-                if inf_count > 0:
-                    logger.warning(f"พบค่า inf หรือ -inf {inf_count} ค่าในคอลัมน์ {col}")
-                    # แทนที่ด้วยค่า NaN แล้วใช้ค่าเฉลี่ย
-                    df_normalized[col] = df_normalized[col].replace([np.inf, -np.inf], np.nan)
-                    mean_value = df_normalized[col].mean()
-                    df_normalized[col] = df_normalized[col].fillna(mean_value)
-                
-                # ตรวจสอบว่าคอลัมน์มีค่า min และ max ที่แตกต่างกันหรือไม่
+            # Handle NaNs and infs that might have been introduced or missed
+            if df_normalized[col].isnull().any() or np.isinf(df_normalized[col]).any():
+                logger.warning(f"NaN or inf values found in column '{col}' before normalization. Filling with mean.")
+                mean_val = df_normalized[col].mean() # Calculate mean before replacing inf
+                df_normalized[col].replace([np.inf, -np.inf], np.nan, inplace=True)
+                df_normalized[col].fillna(mean_val, inplace=True)
+
+            if method == 'minmax':
                 min_val = df_normalized[col].min()
                 max_val = df_normalized[col].max()
-                
-                if min_val != max_val:
+                if max_val > min_val:
                     df_normalized[col] = (df_normalized[col] - min_val) / (max_val - min_val)
-                else:
-                    # ถ้า min และ max เท่ากัน ให้ตั้งค่าเป็น 0.5
-                    df_normalized[col] = 0.5
-                
-                # ตรวจสอบว่ามีค่าอยู่นอกช่วง [0, 1] หรือไม่
-                if (df_normalized[col] < 0).any() or (df_normalized[col] > 1).any():
-                    logger.warning(f"พบค่าอยู่นอกช่วง [0, 1] ในคอลัมน์ {col} กำลังปรับให้อยู่ในช่วง...")
-                    df_normalized[col] = df_normalized[col].clip(0, 1)
+                else: # If min and max are same, all values in this col are same. Normalize to 0 or 0.5.
+                    df_normalized[col] = 0.5 
+                    logger.warning(f"Column '{col}' has min == max. Normalized to 0.5.")
+                # Clip to [0,1] to ensure no values are outside this range due to potential floating point issues
+                df_normalized[col] = df_normalized[col].clip(0, 1)
+
+            elif method == 'zscore':
+                mean_val = df_normalized[col].mean()
+                std_val = df_normalized[col].std()
+                if std_val > 0:
+                    df_normalized[col] = (df_normalized[col] - mean_val) / std_val
+                else: # If std is 0, all values are same. Normalize to 0.
+                    df_normalized[col] = 0.0
+                    logger.warning(f"Column '{col}' has std == 0 for Z-score. Normalized to 0.0.")
+            else:
+                logger.error(f"Unknown normalization method: {method}")
+                raise ValueError(f"Unknown normalization method: {method}")
+        
+        logger.info(f"Normalization ({method}) completed. DataFrame shape: {df_normalized.shape}")
+        self.df_normalized = df_normalized.copy()
+        return self.df_normalized
+
+    def select_features(self, df: pd.DataFrame, features_to_select: Optional[List[str]] = None) -> pd.DataFrame:
+        """
+        Selects specified features from the DataFrame.
+        
+        Args:
+            df (pd.DataFrame): Input DataFrame.
+            features_to_select (list, optional): List of feature names to select. 
+                                               If None, uses features from DATA_CONFIG.
+        
+        Returns:
+            pd.DataFrame: DataFrame with only selected features.
+        """
+        if df is None or df.empty:
+            logger.warning("Input DataFrame for select_features is None or empty.")
+            return pd.DataFrame()
+
+        if features_to_select is None:
+            logger.info("No specific features_to_select provided, using DATA_CONFIG.")
+            # Ensure 'timestamp' and OHLCV are included if they exist in the df
+            default_features = DATA_CONFIG.get('price_features', []) + DATA_CONFIG.get('technical_indicators', [])
+            features_to_select = [feat for feat in default_features if feat in df.columns]
+            if not features_to_select: # If DATA_CONFIG is empty or misconfigured
+                 logger.warning("DATA_CONFIG did not yield any features. Selecting all columns.")
+                 features_to_select = df.columns.tolist()
+
+        # Ensure 'timestamp' is always included if it exists in the original DataFrame
+        if 'timestamp' in df.columns and 'timestamp' not in features_to_select:
+            features_to_select.insert(0, 'timestamp')
+        
+        # Check for missing features in the DataFrame
+        actual_features = [feat for feat in features_to_select if feat in df.columns]
+        missing_in_df = [feat for feat in features_to_select if feat not in df.columns]
+        if missing_in_df:
+            logger.warning(f"The following requested features are not in the DataFrame and will be ignored: {missing_in_df}")
+
+        if not actual_features:
+            logger.error("No features selected. Returning original DataFrame.")
+            self.df_selected = df.copy()
+            return self.df_selected
             
-            return df_normalized
+        selected_df = df[actual_features].copy()
+        logger.info(f"Selected {len(actual_features)} features. DataFrame shape: {selected_df.shape}")
+        self.df_selected = selected_df.copy()
+        return self.df_selected
+
+    def save_processed_data(self, df: pd.DataFrame, file_name_prefix: str = "processed_data", sub_dir: Optional[str] = "features") -> str:
+        """
+        Saves the processed DataFrame to a CSV file.
+        
+        Args:
+            df (pd.DataFrame): DataFrame to save.
+            file_name_prefix (str): Prefix for the output file name.
+            sub_dir (str, optional): Sub-directory within self.data_dir to save the file. 
+                                     If None, saves directly in self.data_dir.
+                                     Defaults to "features" as per original FeatureEngineering.
+        
+        Returns:
+            str: Full path to the saved file.
+        """
+        if df is None or df.empty:
+            logger.warning("DataFrame for save_processed_data is None or empty. Nothing to save.")
+            return ""
+
+        timestamp_str = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+        file_name = f"{file_name_prefix}_{timestamp_str}.csv"
+        
+        # Determine save directory
+        if sub_dir:
+            # Use DATA_CONFIG['data_dir'] as base if it was successfully imported and seems valid, 
+            # otherwise default to self.data_dir. This matches original FeatureEngineering behavior for 'features' subdir.
+            # The original FE used DATA_CONFIG['data_dir'] directly for the 'features' path.
+            # Here, we make it relative to self.data_dir for consistency within DataProcessor.
+            save_directory = os.path.join(self.data_dir, sub_dir)
+        else:
+            save_directory = self.data_dir
             
+        if not os.path.exists(save_directory):
+            os.makedirs(save_directory)
+            logger.info(f"Created directory: {save_directory}")
+        
+        file_path = os.path.join(save_directory, file_name)
+        
+        try:
+            df.to_csv(file_path, index=False)
+            logger.info(f"Processed data saved to: {file_path}")
+            return file_path
         except Exception as e:
-            logger.error(f"เกิดข้อผิดพลาดในการ normalize ข้อมูล: {str(e)}")
-            raise
-    
-    def prepare_data_for_training(self, symbol: str, timeframe: str = '1h', 
+            logger.error(f"Error saving processed data to {file_path}: {e}")
+            return ""
+
+
+    def prepare_data_for_training(self, symbol: str, timeframe: str = '1h',
                                  start_date: Optional[str] = None, 
                                  end_date: Optional[str] = None,
                                  train_ratio: float = 0.7,
-                                 val_ratio: float = 0.15) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+                                 val_ratio: float = 0.15,
+                                 normalization_method: str = 'minmax',
+                                 missing_value_method: str = 'forward',
+                                 features_to_use: Optional[List[str]] = None,
+                                 save_output: bool = False,
+                                 output_filename_prefix: str = "train_ready_data") -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
-        เตรียมข้อมูลสำหรับการฝึกสอนโมเดล โดยแบ่งเป็นชุดฝึกสอน (training), ชุดตรวจสอบ (validation), และชุดทดสอบ (testing)
+        Prepares data for model training: loads, cleans, adds indicators, normalizes, and splits.
         
         Args:
-            symbol (str): สัญลักษณ์คู่เหรียญ
-            timeframe (str): กรอบเวลา
-            start_date (str, optional): วันที่เริ่มต้น
-            end_date (str, optional): วันที่สิ้นสุด
-            train_ratio (float): สัดส่วนของข้อมูลที่ใช้ในการฝึกสอน
-            val_ratio (float): สัดส่วนของข้อมูลที่ใช้ในการตรวจสอบ
+            symbol (str): Cryptocurrency symbol.
+            timeframe (str): Data timeframe.
+            start_date (str, optional): Start date for data loading.
+            end_date (str, optional): End date for data loading.
+            train_ratio (float): Proportion of data for training.
+            val_ratio (float): Proportion of data for validation.
+            normalization_method (str): 'minmax' or 'zscore'.
+            missing_value_method (str): Method for handling missing values.
+            features_to_use (list, optional): Specific features to use. If None, uses DATA_CONFIG.
+            save_output (bool): Whether to save the processed DataFrame.
+            output_filename_prefix (str): Prefix for the saved file if save_output is True.
             
         Returns:
-            Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: ข้อมูลสำหรับการฝึกสอน, ตรวจสอบ, และทดสอบ
+            Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]: Training, validation, and testing DataFrames.
         """
-        # โหลดข้อมูล
-        df = self.load_data(symbol, timeframe, start_date, end_date)
+        # This method combines the original Thai docstring with the English one.
+        # The English part describes the updated functionality.
+        logger.info(f"Starting data preparation for training: {symbol}, {timeframe}")
+
+        # 1. Load data
+        raw_df = self.load_data(symbol, timeframe, start_date, end_date)
+        if raw_df.empty:
+            logger.error("Data loading failed. Cannot prepare data for training.")
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # 2. Handle missing values (initial pass on raw data if necessary)
+        # It's often better to handle missing values *after* feature engineering if indicators might introduce NaNs
+        # For now, let's assume handle_missing_values is robust enough or called again later.
+        # cleaned_df = self.handle_missing_values(raw_df, method=missing_value_method)
+        # if cleaned_df.empty:
+        #     logger.error("Missing value handling failed. Cannot prepare data for training.")
+        #     return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
         
-        # เพิ่มตัวชี้วัดทางเทคนิค
-        df_with_indicators = self.add_technical_indicators(df)
+        # 3. Add technical indicators
+        # The add_technical_indicators method itself now calls handle_missing_values internally before TA calculation
+        # and uses ffill/bfill after.
+        df_with_indicators = self.add_technical_indicators(raw_df) # Use raw_df as input
+        if df_with_indicators.empty:
+            logger.error("Adding technical indicators failed. Cannot prepare data for training.")
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # 4. Select features
+        # Pass df_with_indicators to select_features
+        df_selected_features = self.select_features(df_with_indicators, features_to_select=features_to_use)
+        if df_selected_features.empty:
+            logger.error("Feature selection failed. Cannot prepare data for training.")
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+        # 5. Normalize features
+        # Exclude 'timestamp' from normalization by default in normalize_features method
+        df_normalized = self.normalize_features(df_selected_features, method=normalization_method)
+        if df_normalized.empty:
+            logger.error("Data normalization failed. Cannot prepare data for training.")
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
         
-        # ปรับข้อมูลให้เป็นปกติ
-        df_normalized = self.normalize_data(df_with_indicators)
-        
-        # แบ่งข้อมูลตามสัดส่วน
+        # 6. Save processed data if requested
+        if save_output:
+            self.save_processed_data(df_normalized, file_name_prefix=output_filename_prefix)
+            
+        # 7. Split data
         total_rows = len(df_normalized)
+        if total_rows == 0:
+            logger.error("No data available after processing. Cannot split.")
+            return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
         train_size = int(total_rows * train_ratio)
         val_size = int(total_rows * val_ratio)
         
+        if train_size + val_size > total_rows:
+            logger.warning("Train + Validation size exceeds total data size. Adjusting validation size.")
+            val_size = total_rows - train_size
+            if val_size < 0: # Should not happen if train_ratio < 1
+                 val_size = 0
+        
         train_data = df_normalized.iloc[:train_size]
-        val_data = df_normalized.iloc[train_size:train_size+val_size]
-        test_data = df_normalized.iloc[train_size+val_size:]
+        val_data = df_normalized.iloc[train_size : train_size + val_size]
+        test_data = df_normalized.iloc[train_size + val_size :]
+        
+        logger.info(f"Data split into: Train ({train_data.shape}), Validation ({val_data.shape}), Test ({test_data.shape})")
         
         return train_data, val_data, test_data
     
     def create_features_for_backtesting(self, symbol: str, timeframe: str = '1h', 
                                        start_date: Optional[str] = None, 
-                                       end_date: Optional[str] = None) -> pd.DataFrame:
+                                       end_date: Optional[str] = None,
+                                       missing_value_method: str = 'forward',
+                                       features_to_use: Optional[List[str]] = None,
+                                       normalization_method: str = 'minmax', # Added for consistency
+                                       cols_to_keep_raw: Optional[List[str]] = None) -> pd.DataFrame:
         """
-        สร้างคุณลักษณะ (features) สำหรับการทดสอบย้อนหลัง (backtesting)
+        Creates features for backtesting. Normalizes technical indicators but keeps 
+        price-related columns (OHLCV) in their original scale by default.
         
         Args:
-            symbol (str): สัญลักษณ์คู่เหรียญ
-            timeframe (str): กรอบเวลา
-            start_date (str, optional): วันที่เริ่มต้น
-            end_date (str, optional): วันที่สิ้นสุด
+            symbol (str): Cryptocurrency symbol.
+            timeframe (str): Data timeframe.
+            start_date (str, optional): Start date for data loading.
+            end_date (str, optional): End date for data loading.
+            missing_value_method (str): Method for handling missing values.
+            features_to_use (list, optional): Specific features to use. If None, uses DATA_CONFIG.
+            normalization_method (str): 'minmax' or 'zscore' for normalizable features.
+            cols_to_keep_raw (list, optional): Columns to keep in their original scale (e.g., OHLCV for backtesting).
+                                               Defaults to ['timestamp', 'open', 'high', 'low', 'close', 'volume'].
             
         Returns:
-            pd.DataFrame: DataFrame ที่มีคุณลักษณะสำหรับการทดสอบย้อนหลัง
+            pd.DataFrame: DataFrame with features for backtesting.
         """
-        # โหลดข้อมูล
-        df = self.load_data(symbol, timeframe, start_date, end_date)
+        logger.info(f"Starting feature creation for backtesting: {symbol}, {timeframe}")
+
+        if cols_to_keep_raw is None:
+            cols_to_keep_raw = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+
+        # 1. Load data
+        raw_df = self.load_data(symbol, timeframe, start_date, end_date)
+        if raw_df.empty:
+            logger.error("Data loading failed. Cannot create features for backtesting.")
+            return pd.DataFrame()
+
+        # 2. Add technical indicators
+        # add_technical_indicators handles its own NaNs internally now
+        df_with_indicators = self.add_technical_indicators(raw_df)
+        if df_with_indicators.empty:
+            logger.error("Adding technical indicators failed. Cannot create features for backtesting.")
+            return pd.DataFrame()
+            
+        # 3. Select features (if any specific list is provided)
+        # This step is important to ensure we only process and carry forward necessary columns.
+        # If features_to_use is None, select_features will use DATA_CONFIG or all columns.
+        # We need to ensure cols_to_keep_raw are part of the selected features if they are intended to be in the final output.
         
-        # เพิ่มตัวชี้วัดทางเทคนิค
-        df_with_indicators = self.add_technical_indicators(df)
+        # First, define the set of features we want to work with *before* normalization.
+        # This includes both indicators and the columns we want to keep raw.
+        pre_norm_features_list = features_to_use
+        if pre_norm_features_list:
+            # Ensure cols_to_keep_raw are included in the list if they are requested
+            for col_raw in cols_to_keep_raw:
+                if col_raw not in pre_norm_features_list and col_raw in df_with_indicators.columns:
+                    pre_norm_features_list.append(col_raw)
         
-        # ปรับข้อมูลให้เป็นปกติ (ยกเว้นข้อมูลที่เกี่ยวกับราคาจริง)
-        columns_to_exclude = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+        df_selected = self.select_features(df_with_indicators, features_to_select=pre_norm_features_list)
+        if df_selected.empty:
+            logger.error("Feature selection failed. Cannot create features for backtesting.")
+            return pd.DataFrame()
+
+        # 4. Normalize data, excluding 'cols_to_keep_raw'
+        # The df_selected now contains all columns we care about.
+        # We will normalize a copy of it, then selectively put back the raw values.
         
-        # สร้าง DataFrame ใหม่ที่มีทั้งข้อมูลราคาจริงและข้อมูลที่ปรับให้เป็นปกติแล้ว
-        df_features = df_with_indicators.copy()
+        df_normalized_component = self.normalize_features(df_selected, 
+                                                          method=normalization_method, 
+                                                          columns_to_exclude=cols_to_keep_raw)
+        if df_normalized_component.empty:
+            logger.error("Normalization step failed for backtesting features.")
+            return pd.DataFrame()
+
+        # Create the final features DataFrame
+        # Start with the normalized data, then overwrite the columns that should be raw
+        # This is safer than trying to pick columns for normalization from df_selected
+        final_backtest_df = df_normalized_component.copy()
         
-        # ปรับคอลัมน์ที่ต้องการให้เป็นปกติ
-        columns_to_normalize = [col for col in df_features.columns if col not in columns_to_exclude]
-        
-        for col in columns_to_normalize:
-            if df_features[col].min() != df_features[col].max():
-                df_features[col] = (df_features[col] - df_features[col].min()) / (df_features[col].max() - df_features[col].min())
+        for col in cols_to_keep_raw:
+            if col in df_selected.columns: # Ensure the column exists in the source
+                final_backtest_df[col] = df_selected[col]
             else:
-                df_features[col] = 0.5
-                
-        return df_features
+                logger.warning(f"Column '{col}' requested in cols_to_keep_raw not found in selected features.")
+        
+        logger.info(f"Features for backtesting created. DataFrame shape: {final_backtest_df.shape}")
+        self.df_selected = final_backtest_df.copy() # Update self.df_selected with the result
+        return self.df_selected
