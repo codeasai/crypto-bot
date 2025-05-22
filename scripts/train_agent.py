@@ -15,6 +15,7 @@ from typing import Tuple
 import tensorflow as tf
 import logging
 from tqdm import tqdm
+import threading
 
 # ตั้งค่า TensorFlow logging
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'  # ปิด warning และ info messages
@@ -69,6 +70,11 @@ def setup_tensorflow():
         for gpu in gpus:
             logger.info(f"ชื่อ GPU: {gpu.name}")
             
+        # ตั้งค่าตัวแปรสำหรับการยกเลิก
+        training_cancelled = False
+        current_episode = 0
+        current_run_dir = None
+        
         # ตั้งค่า memory growth
         try:
             for gpu in gpus:
@@ -108,17 +114,19 @@ def setup_tensorflow():
         os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
         logger.warning("บังคับให้ใช้ CPU เนื่องจากเกิดข้อผิดพลาดในการตั้งค่า GPU")
 
-def signal_handler(signum, frame):
-    """
-    จัดการสัญญาณการยกเลิกการฝึกสอน
-    """
-    global training_cancelled
-    logger.info("\nกำลังยกเลิกการฝึกสอน...")
-    training_cancelled = True
+def setup_signal_handlers():
+    """ตั้งค่า signal handlers สำหรับการหยุดการทำงาน"""
+    try:
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(signal.SIGINT, signal_handler)
+            signal.signal(signal.SIGTERM, signal_handler)
+    except Exception as e:
+        print(f"ไม่สามารถตั้งค่า signal handlers: {str(e)}")
 
-# ลงทะเบียน signal handler
-signal.signal(signal.SIGINT, signal_handler)
-signal.signal(signal.SIGTERM, signal_handler)
+def signal_handler(signum, frame):
+    """จัดการ signal สำหรับการหยุดการทำงาน"""
+    print("\nกำลังหยุดการทำงาน...")
+    sys.exit(0)
 
 def save_training_state(agent, run_dir: str, episode: int, history: dict):
     """
@@ -706,7 +714,7 @@ def train_dqn_agent(
             except Exception as e:
                 logger.error(f"เกิดข้อผิดพลาดในการโหลด checkpoint: {str(e)}")
                 logger.info("เริ่มฝึกสอนใหม่ตั้งแต่รอบแรก")
-                current_episode = 0
+        current_episode = 0
         
         # สร้าง progress bar
         pbar = tqdm(range(current_episode, episodes), 
@@ -1208,4 +1216,20 @@ def evaluate_model(env, agent, state_size: int, episodes: int = 10) -> dict:
     return results
 
 if __name__ == '__main__':
-    main()
+    # ตั้งค่า signal handlers
+    setup_signal_handlers()
+    
+    # ตัวอย่างการใช้งาน
+    results = train_dqn_agent(
+        symbol="BTCUSDT",
+        timeframe="1h",
+        start_date="2023-01-01",
+        end_date="2023-12-31",
+        initial_balance=10000.0,
+        window_size=10,
+        batch_size=64,
+        episodes=1000
+    )
+    
+    if results:
+        print(f"กำไรสูงสุดในการตรวจสอบ: {results['best_validation_profit']:.2f}")
