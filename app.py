@@ -327,32 +327,33 @@ class Navigator:
         # ฟังก์ชันสำหรับโหลดรายการโมเดล
         @st.cache_data
         def load_models():
-            models_path = Path(current_dir) / "models" / "saved_models"
+            project_root = Path(current_dir) # Requirement 1
+            models_path = project_root / "outputs"  # Requirement 2
             model_info = []
             
-            # ตรวจสอบโฟลเดอร์ dqn_btcusdt_5m
-            dqn_path = models_path / "dqn_btcusdt_5m"
-            if dqn_path.exists():
-                for model_dir in dqn_path.iterdir():
-                    if model_dir.is_dir():
-                        # อ่านข้อมูลโมเดลจากไฟล์ config (ถ้ามี)
-                        config_file = model_dir / "config.json"
-                        if config_file.exists():
+            if not models_path.exists() or not models_path.is_dir(): # Requirement 9
+                st.warning(f"ไม่พบโฟลเดอร์ 'outputs' ที่: {models_path}")
+                return model_info
+
+            for run_dir in models_path.iterdir():  # Requirement 3
+                if run_dir.is_dir():
+                    config_file = run_dir / "config.json"  # Requirement 4
+                    
+                    if config_file.exists():  # Requirement 5 & 6
+                        try:
                             with open(config_file, 'r') as f:
-                                config = json.load(f)
-                        else:
-                            config = {
-                                "model_type": "DQN",
-                                "symbol": "BTCUSDT",
-                                "timeframe": "5m",
-                                "created_at": model_dir.name
-                            }
-                        
-                        model_info.append({
-                            "name": model_dir.name,
-                            "path": str(model_dir),
-                            "config": config
-                        })
+                                config_data = json.load(f)
+                            
+                            model_info.append({  # Requirement 5a, 5b, 5c, 5d
+                                "name": run_dir.name,
+                                "path": str(run_dir),
+                                "config": config_data
+                            })
+                        except json.JSONDecodeError: # Requirement 7
+                            st.warning(f"ไม่สามารถอ่านไฟล์ config.json ใน {run_dir.name} เนื่องจากรูปแบบไม่ถูกต้อง")
+                        except Exception as e: # General error handling for a run_dir
+                            st.error(f"เกิดข้อผิดพลาดในการโหลดข้อมูลจาก {run_dir.name}: {e}")
+                    # If config.json is not found, skip the directory (Requirement 6)
             
             return model_info
 
@@ -581,30 +582,77 @@ class Navigator:
         st.subheader("ผลการฝึก")
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("กำไรสูงสุด", f"{model['config'].get('best_profit', 0):.2f}")
+            st.metric("กำไรสูงสุด (จาก Config)", f"{model['config'].get('best_validation_profit', model['config'].get('best_profit', 0)):.2f}")
         with col2:
-            st.metric("อัตราการชนะ", f"{model['config'].get('win_rate', 0)*100:.2f}%")
+            st.metric("อัตราการชนะ (จาก Config)", f"{model['config'].get('avg_win_rate', model['config'].get('win_rate', 0))*100:.2f}%")
         with col3:
-            st.metric("จำนวนการเทรด", f"{model['config'].get('total_trades', 0)}")
-            
-        # แสดงกราฟ
-        st.subheader("กราฟแสดงผล")
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(
-            y=model['config'].get('profit_history', [0]),
-            name="กำไร",
-            line=dict(color='#00FF9D')
-        ))
-        fig.update_layout(
-            title="กำไรสะสม",
-            xaxis_title="การเทรด",
-            yaxis_title="กำไร",
-            template="plotly_dark"
-        )
-        st.plotly_chart(fig, use_container_width=True)
+            st.metric("จำนวนการเทรด (จาก Config)", f"{model['config'].get('avg_trades_per_episode', model['config'].get('total_trades', 0))}")
+
+        # --- Load and Plot Data from training_history.csv ---
+        st.subheader("ประวัติการฝึกสอน (จาก CSV)")
+        run_dir = Path(model['path'])
+        history_csv_path = run_dir / 'training_history.csv'
+
+        if history_csv_path.exists():
+            try:
+                history_df = pd.read_csv(history_csv_path)
+                st.dataframe(history_df.head())
+
+                # Determine x-axis (assuming 'episode' or default index)
+                # If 'episode' column exists, use it. Otherwise, use index.
+                # For many st.line_chart, it defaults to index if x is not specified.
+                
+                if 'train_profits' in history_df.columns:
+                    st.line_chart(history_df[['train_profits']], use_container_width=True)
+                    # st.plotly_chart(go.Figure(go.Scatter(y=history_df['train_profits'], name="Train Profits")), use_container_width=True)
+                
+                if 'val_profits' in history_df.columns:
+                    # Check if val_profits has fewer entries (common if validated less frequently)
+                    # For simplicity with st.line_chart, we might plot it directly.
+                    # If using Plotly, more control over x-axis is possible if an episode mapping exists.
+                    st.line_chart(history_df[['val_profits']], use_container_width=True)
+
+                if 'exploration_rates' in history_df.columns:
+                    st.line_chart(history_df[['exploration_rates']], use_container_width=True)
+                
+                # Example for combined chart if desired (more complex x-axis handling might be needed)
+                # profit_cols_to_plot = [col for col in ['train_profits', 'val_profits'] if col in history_df.columns]
+                # if profit_cols_to_plot:
+                #     st.line_chart(history_df[profit_cols_to_plot])
+
+            except Exception as e:
+                st.warning(f"ไม่สามารถโหลดหรือแสดงผล training_history.csv: {e}")
+        else:
+            st.warning("ไม่พบไฟล์ training_history.csv")
+
+        # --- Display Saved PNG Image Plots ---
+        st.subheader("กราฟแสดงผล (จาก PNG)")
         
+        training_plot_png = run_dir / 'training_history.png'
+        exploration_plot_png = run_dir / 'exploration_rate.png'
+        validation_trades_png = run_dir / 'best_validation_trades.png'
+
+        if training_plot_png.exists():
+            st.image(str(training_plot_png), caption="Training History Plot")
+        else:
+            st.markdown("_(ไม่พบ training_history.png)_")
+
+        if exploration_plot_png.exists():
+            st.image(str(exploration_plot_png), caption="Exploration Rate Plot")
+        else:
+            st.markdown("_(ไม่พบ exploration_rate.png)_")
+            
+        if validation_trades_png.exists():
+            st.image(str(validation_trades_png), caption="Best Validation Trades Plot")
+        else:
+            st.markdown("_(ไม่พบ best_validation_trades.png)_")
+
+        # Remove old placeholder plot if it was distinct
+        # The original code had a plotly chart for model['config'].get('profit_history', [0])
+        # This is now superseded by the CSV and PNG plots.
+
         # ปุ่มปิด
-        if st.button("ปิด", key=f"close_details_{model['name']}"):
+        if st.button("ปิดรายละเอียด", key=f"close_details_{model['name']}"): # Changed button label for clarity
             st.experimental_rerun()
 
     def model_evaluation_page(self):

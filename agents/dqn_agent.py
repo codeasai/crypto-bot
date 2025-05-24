@@ -12,6 +12,7 @@ from typing import Tuple, List, Dict, Any, Optional
 import os
 import logging
 from datetime import datetime
+import json
 
 # ตั้งค่า logger
 logger = logging.getLogger(__name__)
@@ -273,29 +274,64 @@ class DQNAgent:
             logger.error(f"เกิดข้อผิดพลาดในการ replay: {str(e)}")
             return 0
     
-    def save(self, filepath: str):
+    def save(self, filepath: str, run_config_params: Optional[Dict[str, Any]] = None):
         """
-        บันทึกโมเดลลงในไฟล์
+        บันทึกโมเดล, ประวัติการฝึกสอน, และคอนฟิกูเรชันลงในไฟล์
         
         Args:
-            filepath (str): ตำแหน่งที่ต้องการบันทึกโมเดล
+            filepath (str): ตำแหน่งพื้นฐานสำหรับบันทึกไฟล์ (เช่น outputs/RUN_NAME/best_model)
+            run_config_params (Optional[Dict[str, Any]]): พารามิเตอร์เพิ่มเติมจากสคริปต์การฝึกสอน
         """
         try:
             # สร้างโฟลเดอร์ถ้ายังไม่มี
-            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            output_dir = os.path.dirname(filepath)
+            os.makedirs(output_dir, exist_ok=True)
             
             # บันทึกโมเดลในรูปแบบ .keras
-            model_path = os.path.splitext(filepath)[0] + '.keras'
+            # ชื่อไฟล์โมเดลจะใช้ basename ของ filepath, เช่น best_model.keras
+            model_filename = os.path.basename(filepath)
+            model_path = os.path.join(output_dir, model_filename + '.keras')
             self.model.save(model_path)
             
             # บันทึกประวัติการฝึกสอน
-            history_path = os.path.splitext(filepath)[0] + '_history.npz'
+            # ชื่อไฟล์ประวัติจะใช้ basename ของ filepath, เช่น best_model_history.npz
+            history_filename = model_filename + '_history.npz'
+            history_path = os.path.join(output_dir, history_filename)
             np.savez(history_path, **self.training_history)
             
-            logger.info(f"บันทึกโมเดลและประวัติการฝึกสอนที่ {filepath}")
+            # เตรียมข้อมูลคอนฟิกูเรชัน
+            config_data = {
+                "agent_params": {
+                    "state_size": self.state_size,
+                    "action_size": self.action_size,
+                    "learning_rate": self.learning_rate,
+                    "discount_factor": self.discount_factor,
+                    "exploration_decay": self.exploration_decay,
+                    "exploration_min": self.exploration_min,
+                    "batch_size": self.batch_size,
+                    "memory_size": self.memory.maxlen,
+                }
+            }
+            
+            if run_config_params:
+                config_data["run_params"] = run_config_params
+            
+            # บันทึกคอนฟิกูเรชันเป็น JSON
+            # config.json จะอยู่ใน output_dir
+            config_json_path = os.path.join(output_dir, 'config.json')
+            try:
+                with open(config_json_path, 'w') as f:
+                    json.dump(config_data, f, indent=4)
+                logger.info(f"บันทึกคอนฟิกูเรชันที่ {config_json_path}")
+            except IOError as e:
+                logger.error(f"เกิดข้อผิดพลาดในการเขียนไฟล์คอนฟิกูเรชัน: {str(e)}")
+            except TypeError as e:
+                logger.error(f"เกิดข้อผิดพลาดในการแปลงข้อมูลคอนฟิกูเรชันเป็น JSON: {str(e)}")
+
+            logger.info(f"บันทึกโมเดลที่ {model_path} และประวัติการฝึกสอนที่ {history_path}")
             
         except Exception as e:
-            logger.error(f"เกิดข้อผิดพลาดในการบันทึกโมเดล: {str(e)}")
+            logger.error(f"เกิดข้อผิดพลาดในการบันทึกโมเดลและข้อมูล: {str(e)}")
     
     def load(self, filepath: str):
         """
