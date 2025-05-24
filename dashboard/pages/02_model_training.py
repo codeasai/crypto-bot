@@ -22,33 +22,32 @@ st.title("ฝึกสอนโมเดล")
 # ฟังก์ชันสำหรับโหลดรายการโมเดล
 @st.cache_data
 def load_models():
-    models_path = project_root / "models" / "saved_models"
+    models_path = project_root / "outputs"  # Requirement 1
     model_info = []
     
-    # ตรวจสอบโฟลเดอร์ dqn_btcusdt_5m
-    dqn_path = models_path / "dqn_btcusdt_5m"
-    if dqn_path.exists():
-        for model_dir in dqn_path.iterdir():
-            if model_dir.is_dir():
-                # อ่านข้อมูลโมเดลจากไฟล์ config (ถ้ามี)
-                config_file = model_dir / "config.json"
-                if config_file.exists():
-                    with open(config_file, 'r') as f:
-                        config = json.load(f)
-                else:
-                    config = {
-                        "model_type": "DQN",
-                        "symbol": "BTCUSDT",
-                        "timeframe": "5m",
-                        "created_at": model_dir.name
-                    }
+    if models_path.exists() and models_path.is_dir():
+        for run_dir in models_path.iterdir():  # Requirement 2
+            if run_dir.is_dir():
+                config_file = run_dir / "config.json"  # Requirement 3
                 
-                model_info.append({
-                    "name": model_dir.name,
-                    "path": str(model_dir),
-                    "config": config
-                })
-    
+                if config_file.exists():  # Requirement 4
+                    try:
+                        with open(config_file, 'r') as f:
+                            config_data = json.load(f)
+                        
+                        model_info.append({  # Requirement 4a, 4b, 4c, 4d
+                            "name": run_dir.name,
+                            "path": str(run_dir),
+                            "config": config_data
+                        })
+                    except json.JSONDecodeError:
+                        st.warning(f"ไม่สามารถอ่านไฟล์ config.json ใน {run_dir.name} เนื่องจากรูปแบบไม่ถูกต้อง")
+                    except Exception as e:
+                        st.error(f"เกิดข้อผิดพลาดในการโหลดข้อมูลจาก {run_dir.name}: {e}")
+                # Requirement 5: If config.json is not found, skip the directory.
+    else:
+        st.warning(f"ไม่พบโฟลเดอร์ outputs ที่: {models_path}")
+        
     return model_info
 
 # ฟังก์ชันสำหรับลบโมเดล

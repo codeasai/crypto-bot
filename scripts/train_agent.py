@@ -35,6 +35,52 @@ from utils.logger import setup_logger
 # ตั้งค่า logger
 logger = setup_logger('train')
 
+# --- Start of new code for progress callback ---
+from typing import Optional, Callable, Dict, Any, Tuple # Ensure these are imported
+
+# Global reference for the active progress callback, used by _log_or_callback
+_active_progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None
+
+def _log_or_callback(message: str, level: str = "info", p_type: str = "log", details: Optional[Dict[str, Any]] = None):
+    """
+    Helper to send log/status messages or progress updates.
+    Uses a globally set callback if available, otherwise falls back to standard logger.
+    """
+    global _active_progress_callback
+    
+    payload = {"type": p_type, "level": level, "message": message}
+    if details:
+        payload.update(details)
+
+    if _active_progress_callback:
+        try:
+            _active_progress_callback(payload)
+        except Exception as e_cb:
+            # Fallback to logger if callback itself fails
+            logger.error(f"Progress callback failed: {e_cb}. Original message: {message}")
+            # Log the original message using standard logger
+            if level == "info": logger.info(message)
+            elif level == "warning": logger.warning(message)
+            elif level == "error": logger.error(message)
+            elif level == "debug": logger.debug(message)
+    else:
+        # Fallback to standard logger if no callback is active
+        if p_type == "log" or p_type == "status": # Treat status as info log if no callback
+            if level == "info":
+                logger.info(message)
+            elif level == "warning":
+                logger.warning(message)
+            elif level == "error":
+                logger.error(message)
+            elif level == "debug":
+                logger.debug(message)
+        elif p_type == "progress" and details: # Log progress in a readable way
+            logger.info(
+                f"[PROGRESS] Episode {details.get('current_episode')}/{details.get('total_episodes')} "
+                f"- Metrics: {details.get('metrics_str', str(details.get('metrics')))}"
+            )
+# --- End of new code for progress callback ---
+
 # ตัวแปรสำหรับการยกเลิกการฝึกสอน
 training_cancelled = False
 current_episode = 0
@@ -295,15 +341,10 @@ def preview_data_loading(symbol: str, timeframe: str, start_date: str, end_date:
     logger.info("\nตัวอย่างข้อมูล (5 แท่งแรก):")
     logger.info(f"\n{df.head().to_string()}")
     
-    while True:
-        choice = input("\nต้องการใช้ข้อมูลชุดนี้ในการฝึกสอนหรือไม่? (Y/n): ").lower()
-        if choice in ['', 'y', 'yes']:
-            return True, df
-        elif choice in ['n', 'no']:
-            logger.info("ยกเลิกการฝึกสอน")
-            return False, pd.DataFrame()
-        else:
-            print("กรุณากด Enter สำหรับ Yes หรือพิมพ์ 'n' สำหรับ No")
+    # Requirement 1: Remove interactive prompts
+    # Assume data use is confirmed if the function is called.
+    logger.info("ข้อมูลจะถูกใช้สำหรับการฝึกสอน (ยืนยันอัตโนมัติ)")
+    return True, df
 
 def validate_data_range(df: pd.DataFrame, start_date: str, end_date: str) -> bool:
     """
@@ -350,16 +391,10 @@ def validate_data_range(df: pd.DataFrame, start_date: str, end_date: str) -> boo
         else:
             logger.info("จำนวนข้อมูลเหมาะสมสำหรับการฝึกสอน")
             
-        # ขอการยืนยัน
-        while True:
-            choice = input("\nต้องการใช้ข้อมูลชุดนี้ในการฝึกสอนหรือไม่? (Y/n): ").lower()
-            if choice in ['', 'y', 'yes']:
-                return True
-            elif choice in ['n', 'no']:
-                logger.info("ยกเลิกการฝึกสอน")
-                return False
-            else:
-                print("กรุณากด Enter สำหรับ Yes หรือพิมพ์ 'n' สำหรับ No")
+        # Requirement 1: Remove interactive prompts
+        # Assume data use is confirmed if the function is called.
+        logger.info("ข้อมูลช่วงเวลาที่ตรวจสอบแล้วจะถูกใช้ (ยืนยันอัตโนมัติ)")
+        return True
     else:
         logger.error(f"ข้อมูลไม่อยู่ในช่วงเวลาที่กำหนด")
         logger.error(f"ข้อมูลมีช่วงเวลา: {data_start} ถึง {data_end}")
@@ -386,15 +421,10 @@ def validate_and_confirm_data(df: pd.DataFrame, symbol: str, timeframe: str) -> 
     logger.info(f"จำนวนข้อมูลทั้งหมด: {len(df)} แท่ง")
     logger.info(f"ช่วงเวลา: {df.index[0]} ถึง {df.index[-1]}")
     
-    while True:
-        choice = input("\nต้องการใช้ข้อมูลชุดนี้ในการฝึกสอนหรือไม่? (Y/n): ").lower()
-        if choice in ['', 'y', 'yes']:
-            return True
-        elif choice in ['n', 'no']:
-            logger.info("ยกเลิกการฝึกสอน")
-            return False
-        else:
-            print("กรุณากด Enter สำหรับ Yes หรือพิมพ์ 'n' สำหรับ No")
+    # Requirement 1: Remove interactive prompts
+    # Assume data use is confirmed if the function is called.
+    logger.info("ข้อมูลจะถูกใช้สำหรับการฝึกสอน (ยืนยันอัตโนมัติ)")
+    return True
 
 def find_latest_checkpoint(run_dir: str) -> Tuple[int, str, dict]:
     """
@@ -471,37 +501,39 @@ def check_gpu_availability() -> bool:
         # ตรวจสอบ CUDA
         if not tf.test.is_built_with_cuda():
             logger.warning("TensorFlow ไม่ได้ build ด้วย CUDA")
-            return False
+            return False  # Requirement 1: Modified to return bool
             
         # ตรวจสอบ GPU
         gpus = tf.config.list_physical_devices('GPU')
         if not gpus:
             logger.warning("ไม่พบ GPU")
-            return False
+            return False  # Requirement 1: Modified to return bool
             
         # แสดงข้อมูล GPU
         logger.info("\n=== ข้อมูล GPU ที่พบ ===")
         for i, gpu in enumerate(gpus):
             logger.info(f"GPU {i}: {gpu.name}")
-            
-        # ขอการยืนยันจากผู้ใช้
-        while True:
-            choice = input("\nต้องการใช้ GPU ในการ train หรือไม่? (Y/n/q): ").lower()
-            if choice in ['', 'y', 'yes']:
-                return True
-            elif choice in ['n', 'no']:
-                logger.info("จะใช้ CPU แทน")
-                return False
-            elif choice in ['q', 'quit']:
-                logger.info("ยกเลิกการ train")
-                sys.exit(0)
-            else:
-                print("กรุณากด Enter สำหรับ Yes, 'n' สำหรับ No, หรือ 'q' สำหรับยกเลิก")
+        
+        # Requirement 1: Remove input, return True if GPU seems available
+        # The decision to use GPU will be passed as an argument to train_dqn_agent
+        
+        # Attempt a simple TensorFlow operation on GPU to confirm
+        try:
+            with tf.device('/GPU:0'):
+                a = tf.random.normal([10, 10])
+                b = tf.random.normal([10, 10])
+                _ = tf.matmul(a, b)
+            logger.info("GPU สามารถเข้าถึงและใช้งานได้")
+            return True
+        except Exception as e_tf:
+            logger.error(f"ไม่สามารถดำเนินการบน GPU ได้: {str(e_tf)}")
+            return False
                 
     except Exception as e:
         logger.error(f"เกิดข้อผิดพลาดในการตรวจสอบ GPU: {str(e)}")
         return False
 
+# Requirement 5: Function Signature Change (partially, will add more args later)
 def train_dqn_agent(
     symbol: str,
     timeframe: str,
@@ -518,18 +550,33 @@ def train_dqn_agent(
     """
     global training_cancelled, current_episode, current_run_dir
     
+    # Requirement 5: Function Signature Change (placeholders for now)
+    # use_gpu_flag: bool = True, 
+    # progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None, 
+    # run_config_params: Optional[Dict[str, Any]] = None
+
     try:
-        # ตรวจสอบ GPU และขอการยืนยัน
-        use_gpu = check_gpu_availability()
-        if not use_gpu:
-            os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-            logger.info("กำลังใช้ CPU ในการ train")
-        else:
-            logger.info("กำลังใช้ GPU ในการ train")
-            
-        # ตั้งค่า TensorFlow
-        setup_tensorflow()
+        # Requirement 3: GPU Configuration
+        # This section will be updated based on use_gpu_flag and progress_callback
         
+        # For now, keep the old GPU check logic and TensorFlow setup order.
+        # This will be refactored once progress_callback is integrated.
+        gpu_available_check = check_gpu_availability() # This now returns bool
+        
+        # Placeholder for actual use_gpu_flag logic
+        # if use_gpu_flag and gpu_available_check:
+        #     logger.info("กำลังใช้ GPU ในการ train")
+        # else:
+        #     os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+        #     logger.info("กำลังใช้ CPU ในการ train")
+
+        # The actual decision to use GPU or CPU will be more nuanced later.
+        # For this step, we just call the modified check_gpu_availability.
+        # The `setup_tensorflow` might also need adjustment based on `use_gpu_flag`.
+        
+        setup_tensorflow() # This function itself configures GPU if available.
+                           # It might need to be adapted for the use_gpu_flag.
+
         # 1. ตรวจสอบและเตรียมวันที่
         current_date = datetime.now()
         if start_date:
@@ -557,7 +604,9 @@ def train_dqn_agent(
         # 2. แสดงตัวอย่างข้อมูลและขอการยืนยัน
         confirmed, raw_data = preview_data_loading(symbol, timeframe, start_date, end_date)
         if not confirmed or raw_data.empty:
-            sys.exit(0)
+            # sys.exit(0) # Programmatic use should not exit, but return or raise
+            logger.error("การยืนยันข้อมูลล้มเหลว หรือข้อมูลว่างเปล่า")
+            return None # Return None to indicate failure
             
         # 3. เตรียมโฟลเดอร์สำหรับผลลัพธ์
         output_dir = os.path.abspath(output_dir)
