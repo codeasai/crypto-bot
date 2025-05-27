@@ -313,7 +313,7 @@ class Navigator:
                         st.metric("SMA (50)", f"{sma.iloc[-1]:,.2f}")
                     with col3:
                         st.metric("Bollinger Bands", f"Upper: {upper_band.iloc[-1]:,.2f}")
-                        st.metric("", f"Lower: {lower_band.iloc[-1]:,.2f}")
+                        st.metric("Lower Band", f"Lower: {lower_band.iloc[-1]:,.2f}")
                 else:
                     st.warning("ไม่พบไฟล์ข้อมูลที่ประมวลผลแล้ว")
 
