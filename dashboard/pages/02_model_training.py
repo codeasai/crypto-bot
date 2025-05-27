@@ -6,6 +6,7 @@ import glob
 import json
 import os
 import shutil
+from datetime import datetime, timedelta
 
 # เพิ่ม path ของโปรเจค
 project_root = Path(__file__).parent.parent.parent
@@ -119,11 +120,55 @@ model_type = st.sidebar.selectbox(
     ["Deep Q-Learning", "Policy Gradient", "Actor-Critic"]
 )
 
-# ตั้งค่าพารามิเตอร์
-st.sidebar.subheader("พารามิเตอร์")
+# ตั้งค่าพารามิเตอร์พื้นฐาน
+st.sidebar.subheader("พารามิเตอร์พื้นฐาน")
+symbol = st.sidebar.text_input("สัญลักษณ์คู่เหรียญ", "BTCUSDT")
+timeframe = st.sidebar.selectbox("กรอบเวลา", ["1m", "5m", "15m", "30m", "1h", "4h", "1d"])
+start_date = st.sidebar.date_input("วันที่เริ่มต้น", datetime.now() - timedelta(days=365))
+end_date = st.sidebar.date_input("วันที่สิ้นสุด", datetime.now())
+episodes = st.sidebar.number_input("จำนวนรอบการฝึก", min_value=1, max_value=10000, value=1000)
+
+# ตั้งค่าพารามิเตอร์ขั้นสูง
+st.sidebar.subheader("พารามิเตอร์ขั้นสูง")
+initial_balance = st.sidebar.number_input("เงินทุนเริ่มต้น", min_value=1000.0, max_value=1000000.0, value=10000.0)
+window_size = st.sidebar.number_input("ขนาดหน้าต่างข้อมูลย้อนหลัง", min_value=5, max_value=100, value=10)
+batch_size = st.sidebar.number_input("ขนาด batch", min_value=16, max_value=512, value=64)
 learning_rate = st.sidebar.slider("Learning Rate", 0.0001, 0.01, 0.001, 0.0001)
-batch_size = st.sidebar.slider("Batch Size", 32, 512, 64, 32)
-epochs = st.sidebar.slider("Epochs", 10, 1000, 100, 10)
+
+# ปุ่มเริ่มการฝึก
+if st.sidebar.button("เริ่มการฝึกโมเดลใหม่", type="primary"):
+    try:
+        # แปลงวันที่เป็น string format
+        start_date_str = start_date.strftime("%Y-%m-%d")
+        end_date_str = end_date.strftime("%Y-%m-%d")
+        
+        # เรียกใช้ฟังก์ชัน train_dqn_agent
+        results = train_dqn_agent(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_date=start_date_str,
+            end_date=end_date_str,
+            initial_balance=initial_balance,
+            window_size=window_size,
+            batch_size=batch_size,
+            episodes=episodes
+        )
+        
+        if results:
+            st.success(f"การฝึกโมเดลเสร็จสิ้น! กำไรสูงสุดในการตรวจสอบ: {results['best_validation_profit']:.2f}")
+            st.info(f"โมเดลถูกบันทึกไว้ที่: {results['best_model_path']}")
+            
+            # แสดงกราฟผลการฝึก
+            if 'history' in results:
+                history = results['history']
+                st.line_chart({
+                    "กำไรการฝึก": history['train_profits'],
+                    "กำไรการตรวจสอบ": history['val_profits']
+                })
+        else:
+            st.error("เกิดข้อผิดพลาดในการฝึกโมเดล")
+    except Exception as e:
+        st.error(f"เกิดข้อผิดพลาด: {str(e)}")
 
 # Main content
 col1, col2 = st.columns([2, 1])
@@ -165,7 +210,7 @@ with col2:
         "model_type": model_type,
         "learning_rate": learning_rate,
         "batch_size": batch_size,
-        "epochs": epochs
+        "epochs": episodes
     })
 
 # ปุ่มควบคุม

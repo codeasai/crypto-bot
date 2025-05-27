@@ -3,10 +3,17 @@ import pandas as pd
 import plotly.graph_objects as go
 from pathlib import Path
 import sys
+import json
+import os
+from datetime import datetime
 
 # เพิ่ม path ของโปรเจค
 project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
+
+from scripts.evaluate_agent import EvaluationPipeline
+from core.evaluator import ModelEvaluator
+from evaluation.validation import ValidationMetrics
 
 st.set_page_config(
     page_title="Model Evaluation",
@@ -14,86 +21,209 @@ st.set_page_config(
     layout="wide"
 )
 
-st.title("ประเมินผลโมเดล")
+# ล้างแคชทั้งหมด
+st.cache_data.clear()
 
-# Sidebar
-st.sidebar.header("เลือกโมเดล")
-model_name = st.sidebar.selectbox(
-    "โมเดล",
-    ["DQN_Model_001", "PG_Model_002", "AC_Model_003"]
-)
+st.write("start page")
+project_root = Path(__file__).parent.parent.parent
+st.write(f"project_root: {project_root}")
 
-# Main content
-col1, col2 = st.columns([2, 1])
+models_path = project_root / "models" / "saved_models"
+dqn_path = models_path / "dqn_btcusdt_5m"
+st.write(f"dqn_path: {dqn_path}")
+st.write(f"dqn_path exists: {dqn_path.exists()}")
+if dqn_path.exists():
+    for model_dir in dqn_path.iterdir():
+        st.write(f"model_dir: {model_dir}, is_dir: {model_dir.is_dir()}")
+        st.write(f"best_model.keras exists: {(model_dir / 'best_model.keras').exists()}")
 
-with col1:
-    st.subheader("ผลการทำนาย")
+def get_trained_models():
+    """ดึงรายการโมเดลที่เทรนไว้แล้ว"""
+    models_path = project_root / "models" / "saved_models"
+    model_info = []
     
-    # แสดงกราฟผลการทำนาย
-    dates = pd.date_range(start="2024-01-01", periods=100, freq="D")
-    actual = pd.Series(range(100), index=dates)
-    predicted = actual + pd.Series(range(-5, 95), index=dates)
+    # Debug: แสดง path ที่กำลังค้นหา
+    st.write(f"models_path: {models_path}")
     
+    # ตรวจสอบโฟลเดอร์ dqn_btcusdt_5m
+    dqn_path = models_path / "dqn_btcusdt_5m"
+    st.write(f"dqn_path: {dqn_path}")
+    if dqn_path.exists():
+        st.write("dqn_path exists")
+        for model_dir in dqn_path.iterdir():
+            st.write(f"model_dir: {model_dir}")
+            if (model_dir / 'best_model.keras').exists():
+                st.write(f"พบโมเดล: {model_dir / 'best_model.keras'}")
+                # อ่านข้อมูลโมเดลจากไฟล์ config (ถ้ามี)
+                config_file = model_dir / "config.json"
+                if config_file.exists():
+                    with open(config_file, 'r') as f:
+                        config = json.load(f)
+                else:
+                    config = {
+                        "model_type": "DQN",
+                        "symbol": "BTCUSDT",
+                        "timeframe": "5m",
+                        "created_at": model_dir.name
+                    }
+                
+                model_info.append({
+                    "name": model_dir.name,
+                    "path": str(model_dir / "best_model.keras"),
+                    "config": config,
+                    "date": datetime.fromtimestamp(model_dir.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
+                })
+    else:
+        st.write("dqn_path does not exist")
+    
+    # Debug: แสดงจำนวนโมเดลที่พบ
+    st.write(f"พบโมเดลทั้งหมด: {len(model_info)} รายการ")
+    
+    return sorted(model_info, key=lambda x: x["date"], reverse=True)
+
+def load_evaluation_results(model_name):
+    """โหลดผลการประเมินของโมเดล"""
+    eval_dir = project_root / "logs" / "evaluation" / model_name
+    if not eval_dir.exists():
+        return None
+    
+    metrics_file = eval_dir / "validation_metrics.json"
+    if metrics_file.exists():
+        with open(metrics_file) as f:
+            return json.load(f)
+    return None
+
+def plot_metrics(metrics):
+    """สร้างกราฟแสดง metrics"""
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=dates, y=actual, name="Actual"))
-    fig.add_trace(go.Scatter(x=dates, y=predicted, name="Predicted"))
+    
+    # Performance metrics
+    perf_metrics = metrics["validation_metrics"]
+    fig.add_trace(go.Bar(
+        name="Performance",
+        x=list(perf_metrics.keys()),
+        y=list(perf_metrics.values()),
+        text=[f"{v:.2f}" for v in perf_metrics.values()],
+        textposition="auto",
+    ))
     
     fig.update_layout(
-        title="Actual vs Predicted",
-        xaxis_title="Date",
-        yaxis_title="Price"
+        title="Performance Metrics",
+        xaxis_title="Metric",
+        yaxis_title="Value",
+        showlegend=True
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    return fig
 
-with col2:
-    st.subheader("เมตริกการประเมิน")
+def main():
+    st.title("ประเมินผลโมเดล")
+    models = get_trained_models()
+    st.write("DEBUG: models =", models)
+    if not models:
+        st.warning("ไม่พบโมเดลที่เทรนไว้")
+        return
+    st.subheader("รายการโมเดลที่มีอยู่")
+    for model in models:
+        st.write(f"DEBUG: model name = {model['name']}")
+        st.json(model)
+
+    # Sidebar
+    st.sidebar.header("เลือกโมเดล")
     
-    # แสดงเมตริก
-    metrics = {
-        "Accuracy": "85%",
-        "Precision": "0.82",
-        "Recall": "0.78",
-        "F1 Score": "0.80",
-        "MSE": "0.15",
-        "MAE": "0.12"
-    }
+    if not models:
+        st.warning("ไม่พบโมเดลที่เทรนไว้")
+        return
     
-    for key, value in metrics.items():
-        st.metric(key, value)
+    # แสดงรายการโมเดลที่มีอยู่
+    st.subheader("รายการโมเดลที่มีอยู่")
+    for model in models:
+        with st.expander(f"📁 {model['name']} ({model['date']})"):
+            # แสดงรายละเอียดโมเดล
+            st.json(model['config'])
+            
+            # สร้าง columns สำหรับปุ่มต่างๆ
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button(f"เลือกโมเดลนี้", key=f"select_{model['name']}"):
+                    st.session_state.selected_model = model
+                    st.experimental_rerun()
+            
+            with col2:
+                if st.button(f"ประเมินผล", key=f"eval_{model['name']}"):
+                    with st.spinner("กำลังประเมินผล..."):
+                        try:
+                            pipeline = EvaluationPipeline(
+                                model_path=model["path"],
+                                validation_data_path=str(project_root / "data" / "datasets" / "train_test_split" / "validation_data.csv"),
+                                output_dir=str(project_root / "logs" / "evaluation")
+                            )
+                            pipeline.run_evaluation()
+                            st.success("ประเมินผลเสร็จสิ้น")
+                            st.experimental_rerun()
+                        except Exception as e:
+                            st.error(f"เกิดข้อผิดพลาด: {str(e)}")
+    
+    # แสดงรายละเอียดโมเดลที่เลือกใน sidebar
+    if "selected_model" in st.session_state:
+        st.sidebar.subheader("รายละเอียดโมเดลที่เลือก")
+        st.sidebar.json(st.session_state.selected_model["config"])
+    
+    st.subheader("ผลการทำนาย")
+    
+    # Main content
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        if "selected_model" in st.session_state:
+            # โหลดและแสดงผลการประเมิน
+            metrics = load_evaluation_results(st.session_state.selected_model["name"])
+            if metrics:
+                fig = plot_metrics(metrics)
+                st.plotly_chart(fig, use_container_width=True)
+            else:
+                st.info("ยังไม่มีผลการประเมิน")
+        else:
+            st.info("กรุณาเลือกโมเดลที่ต้องการประเมินผล")
+    
+    with col2:
+        st.subheader("เมตริกการประเมิน")
+        
+        if "selected_model" in st.session_state:
+            metrics = load_evaluation_results(st.session_state.selected_model["name"])
+            if metrics:
+                # แสดง metrics หลัก
+                st.metric("Total Return", f"{metrics['validation_metrics']['total_return']:.2f}%")
+                st.metric("Sharpe Ratio", f"{metrics['validation_metrics']['sharpe_ratio']:.2f}")
+                st.metric("Max Drawdown", f"{metrics['validation_metrics']['max_drawdown']:.2f}%")
+                st.metric("Win Rate", f"{metrics['validation_metrics']['win_rate']*100:.1f}%")
+                
+                # แสดง metrics เพิ่มเติม
+                st.metric("Profit Factor", f"{metrics['validation_metrics']['profit_factor']:.2f}")
+                st.metric("Total Trades", str(metrics['validation_metrics']['total_trades']))
+                st.metric("Winning Trades", str(metrics['validation_metrics']['winning_trades']))
+                st.metric("Losing Trades", str(metrics['validation_metrics']['losing_trades']))
+            else:
+                st.info("ยังไม่มีผลการประเมิน")
+        else:
+            st.info("กรุณาเลือกโมเดลที่ต้องการประเมินผล")
+    
+    # ปุ่มประเมินผลใหม่
+    if "selected_model" in st.session_state:
+        if st.button("ประเมินผลใหม่"):
+            with st.spinner("กำลังประเมินผล..."):
+                try:
+                    pipeline = EvaluationPipeline(
+                        model_path=st.session_state.selected_model["path"],
+                        validation_data_path=str(project_root / "data" / "datasets" / "train_test_split" / "validation_data.csv"),
+                        output_dir=str(project_root / "logs" / "evaluation")
+                    )
+                    pipeline.run_evaluation()
+                    st.success("ประเมินผลเสร็จสิ้น")
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.error(f"เกิดข้อผิดพลาด: {str(e)}")
 
-# Confusion Matrix
-st.subheader("Confusion Matrix")
-confusion_matrix = pd.DataFrame({
-    "Predicted Buy": [45, 15],
-    "Predicted Sell": [10, 30]
-}, index=["Actual Buy", "Actual Sell"])
-
-st.dataframe(confusion_matrix)
-
-# Performance Metrics
-st.subheader("Performance Metrics")
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.metric("Win Rate", "75%")
-    st.metric("Profit Factor", "2.5")
-
-with col2:
-    st.metric("Sharpe Ratio", "1.8")
-    st.metric("Max Drawdown", "-15%")
-
-with col3:
-    st.metric("Total Trades", "100")
-    st.metric("Average Trade", "+2.5%")
-
-# Detailed Analysis
-st.subheader("การวิเคราะห์เชิงลึก")
-analysis_data = pd.DataFrame({
-    "Metric": ["Win Rate", "Profit Factor", "Sharpe Ratio", "Max Drawdown"],
-    "Value": ["75%", "2.5", "1.8", "-15%"],
-    "Benchmark": ["70%", "2.0", "1.5", "-20%"],
-    "Status": ["Good", "Good", "Good", "Good"]
-})
-
-st.dataframe(analysis_data, use_container_width=True) 
+if __name__ == "__main__":
+    main() 
